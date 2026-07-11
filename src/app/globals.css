@@ -1,0 +1,5 @@
+/* MUI's CssBaseline handles resets and theme-driven colors. Keep this minimal. */
+html,
+body {
+  height: 100%;
+}
