@@ -1,22 +1,24 @@
 import Box from "@mui/material/Box";
-import Container from "@mui/material/Container";
 import Typography from "@mui/material/Typography";
-import HealthBadge from "@/components/HealthBadge";
+import AdminGate from "@/components/AdminGate";
+import AdminShell from "@/components/AdminShell";
 
 export default function Home() {
   return (
-    <Container maxWidth="md" sx={{ py: 8 }}>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}>
-        <Typography variant="h3" component="h1">
-          Wisper Admin
-        </Typography>
-        <HealthBadge />
-      </Box>
-      <Typography color="text.secondary">
-        Platform administration for Wisper — overview, policy &amp; pricing rules, host and
-        consumer moderation, payouts, and audit. Admin-only (gated to the <code>admin</code>{" "}
-        role); features are added next.
-      </Typography>
-    </Container>
+    <AdminGate>
+      <AdminShell>
+        <Box sx={{ maxWidth: 720 }}>
+          <Typography variant="h4" component="h1" gutterBottom>
+            Overview
+          </Typography>
+          <Typography color="text.secondary">
+            Platform administration for Wisper — overview, policy &amp; pricing rules,
+            host and consumer moderation, payouts, and audit. You&apos;re signed in to the
+            admin console; the dashboard, policy editor, and moderation tools are added
+            next.
+          </Typography>
+        </Box>
+      </AdminShell>
+    </AdminGate>
   );
 }
