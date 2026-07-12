@@ -32,8 +32,20 @@ npm test         # Vitest
 ## Layout
 
 ```
-src/app/            App Router: layout (MUI theme) + landing page
-src/components/     UI components (HealthBadge, …)
-src/lib/wisper/     typed API client + types (mirrors the wisper-api docs/API.md)
+src/app/            App Router: layout (theme + AuthProvider) + gated overview page
+src/components/     UI: AdminGate (auth gate), AdminShell (AppBar/nav), HealthBadge
+src/lib/auth/       Cognito auth: JWT decode, AuthProvider/context, token storage
+src/lib/wisper/     typed API client + /v1/admin client + types (mirrors wisper-api)
 src/theme.ts        MUI dark theme (admin amber accent)
 ```
+
+## Auth
+
+The app is gated to the Cognito `admin` group. `AuthProvider` decodes the
+Cognito ID token (from `localStorage`, or captured from a Hosted-UI redirect
+fragment) purely to drive the UI: `AdminGate` renders the app for an admin, a
+clear **not-authorized** screen for a signed-in non-admin, and a sign-in prompt
+otherwise. The `/v1/admin` API client sends the token as a bearer credential; the
+Wisper API independently verifies the signature and group on every call, so the
+client-side decode is never trusted for security. Configure the Hosted UI via
+`NEXT_PUBLIC_COGNITO_DOMAIN` / `NEXT_PUBLIC_COGNITO_CLIENT_ID` (see `.env.example`).

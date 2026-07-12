@@ -4,6 +4,7 @@ import { AppRouterCacheProvider } from "@mui/material-nextjs/v14-appRouter";
 import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import { theme } from "@/theme";
+import { AuthProvider } from "@/lib/auth/AuthProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,7 +20,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         <AppRouterCacheProvider>
           <ThemeProvider theme={theme}>
             <CssBaseline />
-            {children}
+            <AuthProvider>{children}</AuthProvider>
           </ThemeProvider>
         </AppRouterCacheProvider>
       </body>
