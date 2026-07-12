@@ -1,12 +1,12 @@
 import AdminGate from "@/components/AdminGate";
 import AdminShell from "@/components/AdminShell";
-import OverviewDashboard from "@/components/OverviewDashboard";
+import PolicyEditor from "@/components/PolicyEditor";
 
-export default function Home() {
+export default function PolicyPage() {
   return (
     <AdminGate>
       <AdminShell>
-        <OverviewDashboard />
+        <PolicyEditor />
       </AdminShell>
     </AdminGate>
   );
