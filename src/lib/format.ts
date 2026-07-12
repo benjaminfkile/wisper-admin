@@ -10,6 +10,17 @@ export function formatMoney(minor: number, currency = "USD"): string {
   }).format(minor / 100);
 }
 
+/** Parse a user-entered major-unit amount (e.g. "5", "5.00", "$5.5") into
+ *  integer minor units (cents). Returns null when the input isn't a valid,
+ *  non-negative amount with at most two decimal places. */
+export function parseMoneyToMinor(value: string): number | null {
+  const trimmed = value.trim().replace(/^\$/, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+  const num = Number(trimmed);
+  if (Number.isNaN(num)) return null;
+  return Math.round(num * 100);
+}
+
 /** Format basis points as a percentage (500 → "5%", 1250 → "12.5%"). */
 export function formatBps(bps: number): string {
   const pct = bps / 100;

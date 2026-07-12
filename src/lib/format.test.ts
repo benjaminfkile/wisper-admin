@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { formatBps, formatDateTime, formatMoney, formatNumber } from "./format";
+import {
+  formatBps,
+  formatDateTime,
+  formatMoney,
+  formatNumber,
+  parseMoneyToMinor,
+} from "./format";
 
 describe("format helpers", () => {
   it("formats minor units as currency", () => {
@@ -24,5 +30,20 @@ describe("format helpers", () => {
   it("formats timestamps and passes through unparseable input", () => {
     expect(formatDateTime("not-a-date")).toBe("not-a-date");
     expect(formatDateTime("2026-07-12T00:00:00Z")).toMatch(/2026/);
+  });
+
+  it("parses major-unit amounts into minor units", () => {
+    expect(parseMoneyToMinor("5")).toBe(500);
+    expect(parseMoneyToMinor("12.50")).toBe(1250);
+    expect(parseMoneyToMinor("0.01")).toBe(1);
+    expect(parseMoneyToMinor("$7.5")).toBe(750);
+    expect(parseMoneyToMinor(" 3 ")).toBe(300);
+  });
+
+  it("rejects invalid or over-precise amounts", () => {
+    expect(parseMoneyToMinor("")).toBeNull();
+    expect(parseMoneyToMinor("abc")).toBeNull();
+    expect(parseMoneyToMinor("-5")).toBeNull();
+    expect(parseMoneyToMinor("1.234")).toBeNull();
   });
 });

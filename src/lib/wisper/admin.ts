@@ -95,18 +95,29 @@ export const admin = {
     });
   },
 
-  /** POST /v1/admin/refunds — refund a consumer against a lease/ledger entry. */
-  createRefund(body: RefundRequest): Promise<LedgerMutationResult> {
+  /** POST /v1/admin/refunds — refund a consumer against a lease/ledger entry.
+   *  Money-moving, so it carries an Idempotency-Key: retrying with the same key
+   *  is safe and returns the original result rather than duplicating the refund. */
+  createRefund(
+    body: RefundRequest,
+    idempotencyKey: string,
+  ): Promise<LedgerMutationResult> {
     return request<LedgerMutationResult>(`${V1}/refunds`, {
       method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(body),
     });
   },
 
-  /** POST /v1/admin/adjustments — manual ledger credit/debit. */
-  createAdjustment(body: AdjustmentRequest): Promise<LedgerMutationResult> {
+  /** POST /v1/admin/adjustments — manual ledger credit/debit. Idempotency-Key
+   *  guards against double-posting a manual entry on a retry. */
+  createAdjustment(
+    body: AdjustmentRequest,
+    idempotencyKey: string,
+  ): Promise<LedgerMutationResult> {
     return request<LedgerMutationResult>(`${V1}/adjustments`, {
       method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(body),
     });
   },
