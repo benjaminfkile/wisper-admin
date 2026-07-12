@@ -85,6 +85,33 @@ describe("admin client", () => {
     expect(JSON.parse(calls[0].init.body as string).reason).toBe("abuse");
   });
 
+  it("createRefund POSTs the body with an Idempotency-Key header", async () => {
+    const calls = stubFetch({ body: { id: "r-1", account_id: "acct-1", amount: 500 } });
+    await admin.createRefund(
+      { user_id: "u-1", lease_id: "l-1", amount: 500, reason: "outage" },
+      "idem-key-123",
+    );
+    expect(calls[0].url).toBe("/wisper/v1/admin/refunds");
+    expect(calls[0].init.method).toBe("POST");
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBe("idem-key-123");
+    const body = JSON.parse(calls[0].init.body as string);
+    expect(body).toMatchObject({ user_id: "u-1", amount: 500, reason: "outage" });
+  });
+
+  it("createAdjustment POSTs a signed amount with an Idempotency-Key", async () => {
+    const calls = stubFetch({ body: { id: "a-1", account_id: "acct-9", amount: -250 } });
+    await admin.createAdjustment(
+      { account_id: "acct-9", amount: -250, reason: "correction" },
+      "idem-key-999",
+    );
+    expect(calls[0].url).toBe("/wisper/v1/admin/adjustments");
+    expect((calls[0].init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "idem-key-999",
+    );
+    expect(JSON.parse(calls[0].init.body as string).amount).toBe(-250);
+  });
+
   it("getAudit encodes query params", async () => {
     const calls = stubFetch({ body: { entries: [] } });
     await admin.getAudit({ actor: "admin@wisper.dev", limit: 25 });

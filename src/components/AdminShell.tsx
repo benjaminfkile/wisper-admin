@@ -28,6 +28,7 @@ const NAV: { label: string; href: string }[] = [
   { label: "Policy & Pricing", href: "/policy" },
   { label: "Moderation", href: "/moderation" },
   { label: "Payouts", href: "/payouts" },
+  { label: "Ledger", href: "/ledger" },
   { label: "Audit", href: "/audit" },
 ];
 
