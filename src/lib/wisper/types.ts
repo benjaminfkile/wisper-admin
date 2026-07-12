@@ -57,22 +57,42 @@ export interface AdminOverview {
   generated_at: string;
 }
 
-/** Platform-wide policy & pricing rules (GET/PUT /v1/admin/policy). */
-export interface AdminPolicy {
-  /** Platform take rate applied to each lease, as a fraction in [0, 1]. */
+/** The editable policy & pricing fields (the PUT body). */
+export interface PolicyRules {
+  /** Platform take rate applied to each lease, in basis points (10000 = 100%). */
   platform_fee_bps: number;
   /** Floor/ceiling price per compute-hour, in minor units. */
   min_price_per_hour: number;
   max_price_per_hour: number;
+  /** Minimum wallet top-up a consumer may make, in minor units. */
+  min_topup: number;
   /** Default network mode applied to new wisps. */
   default_network: WispNetwork;
   /** Ceiling on concurrently active leases a single consumer may hold. */
   max_active_leases_per_user: number;
   /** Whether new host registrations are accepted. */
   host_signups_enabled: boolean;
+}
+
+/** A single point-in-time revision of the policy (server-populated). */
+export interface PolicyVersion extends PolicyRules {
+  /** Monotonic revision number; the current policy has the highest. */
+  version: number;
+  /** When this revision was written (RFC3339) and by which admin. */
+  updated_at: string;
+  updated_by: string;
+}
+
+/** Platform-wide policy & pricing rules (GET/PUT /v1/admin/policy).
+ *  On GET the server also returns the current version and prior revisions. */
+export interface AdminPolicy extends PolicyRules {
+  /** Current revision number (server-populated on GET). */
+  version?: number;
   /** Last-write metadata (server-populated on GET). */
   updated_at?: string;
   updated_by?: string;
+  /** Prior revisions, newest first (server-populated on GET). */
+  history?: PolicyVersion[];
 }
 
 /** A registered host (GET /v1/admin/hosts). */

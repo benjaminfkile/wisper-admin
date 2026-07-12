@@ -62,6 +62,7 @@ describe("admin client", () => {
       platform_fee_bps: 500,
       min_price_per_hour: 1,
       max_price_per_hour: 100,
+      min_topup: 500,
       default_network: "egress" as const,
       max_active_leases_per_user: 4,
       host_signups_enabled: true,

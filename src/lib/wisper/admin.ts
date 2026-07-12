@@ -15,6 +15,7 @@ import type {
   AuditQuery,
   LedgerAccount,
   LedgerMutationResult,
+  PolicyRules,
   RefundRequest,
   SuspendRequest,
 } from "./types";
@@ -42,8 +43,10 @@ export const admin = {
     return request<AdminPolicy>(`${V1}/policy`);
   },
 
-  /** PUT /v1/admin/policy — replace the policy & pricing rules. */
-  updatePolicy(policy: AdminPolicy): Promise<AdminPolicy> {
+  /** PUT /v1/admin/policy — replace the policy & pricing rules. Send only the
+   *  editable fields; the server assigns the new version and echoes the full
+   *  policy (including refreshed version history). */
+  updatePolicy(policy: PolicyRules): Promise<AdminPolicy> {
     return request<AdminPolicy>(`${V1}/policy`, {
       method: "PUT",
       body: JSON.stringify(policy),
