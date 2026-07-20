@@ -29,22 +29,21 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import SearchIcon from "@mui/icons-material/Search";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import { formatDateTime, formatMoney, formatNumber } from "@/lib/format";
+import { formatDateTime } from "@/lib/format";
 import type { AdminHost, AdminUser } from "@/lib/wisper/types";
 
 type Kind = "hosts" | "users";
 
-/** Common shape both hosts and users satisfy, for the shared action column. */
-type Account = { id: string; display_name: string; email: string; status: string };
-
-function matches(a: Account, q: string): boolean {
+/** Case-insensitive substring match across the given (possibly missing) fields. */
+function matchesFields(fields: Array<string | undefined | null>, q: string): boolean {
   if (!q) return true;
   const needle = q.toLowerCase();
-  return (
-    a.id.toLowerCase().includes(needle) ||
-    a.display_name.toLowerCase().includes(needle) ||
-    a.email.toLowerCase().includes(needle)
-  );
+  return fields.some((f) => (f ?? "").toLowerCase().includes(needle));
+}
+
+/** Best human name for a host: name, then label, then its id. */
+function hostName(h: AdminHost): string {
+  return h.name || h.label || h.id;
 }
 
 /** Host & user moderation: search the directory and suspend/unsuspend accounts.
@@ -79,15 +78,32 @@ export default function Moderation() {
   );
 }
 
-/** Amber "Suspended" or green "Active" status chip. */
-function StatusChip({ status }: { status: string }) {
+/** Amber "Suspended" chip, or a green chip echoing the account status. */
+function StatusChip({ status }: { status?: string }) {
   const suspended = status === "suspended";
+  const label = suspended
+    ? "Suspended"
+    : status
+      ? status.charAt(0).toUpperCase() + status.slice(1)
+      : "Active";
   return (
     <Chip
       size="small"
       variant="outlined"
       color={suspended ? "warning" : "success"}
-      label={suspended ? "Suspended" : "Active"}
+      label={label}
+    />
+  );
+}
+
+/** Compact yes/no chip for a boolean account flag. */
+function BoolChip({ value }: { value?: boolean }) {
+  return (
+    <Chip
+      size="small"
+      variant="outlined"
+      color={value ? "success" : "default"}
+      label={value ? "Yes" : "No"}
     />
   );
 }
@@ -255,7 +271,10 @@ function HostsPanel() {
   }, [load]);
 
   const shown = useMemo(
-    () => (hosts ?? []).filter((h) => matches(h, query)),
+    () =>
+      (hosts ?? []).filter((h) =>
+        matchesFields([h.id, h.name, h.label, h.owner_user_id], query),
+      ),
     [hosts, query],
   );
 
@@ -295,9 +314,10 @@ function HostsPanel() {
           <TableHead>
             <TableRow>
               <TableCell>Host</TableCell>
+              <TableCell>Owner</TableCell>
               <TableCell>Status</TableCell>
-              <TableCell align="right">Machines</TableCell>
-              <TableCell align="right">Earnings</TableCell>
+              <TableCell>Online</TableCell>
+              <TableCell>Last seen</TableCell>
               <TableCell>Joined</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -307,20 +327,32 @@ function HostsPanel() {
               <TableRow key={h.id}>
                 <TableCell>
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {h.display_name}
+                    {hostName(h)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {h.email}
+                    {h.label && h.label !== hostName(h) ? h.label : h.id}
                   </Typography>
+                </TableCell>
+                <TableCell sx={{ wordBreak: "break-all" }}>
+                  {h.owner_user_id || "—"}
                 </TableCell>
                 <TableCell>
                   <StatusChip status={h.status} />
                 </TableCell>
-                <TableCell align="right">
-                  {formatNumber(h.machines_online)} / {formatNumber(h.machines_total)}
+                <TableCell>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color={h.online ? "success" : "default"}
+                    label={h.online ? "Online" : "Offline"}
+                  />
                 </TableCell>
-                <TableCell align="right">{formatMoney(h.earnings_total)}</TableCell>
-                <TableCell>{formatDateTime(h.created_at)}</TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>
+                  {formatDateTime(h.last_seen_at)}
+                </TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>
+                  {formatDateTime(h.created_at)}
+                </TableCell>
                 <TableCell align="right">
                   {h.status === "suspended" ? (
                     <Tooltip title={h.suspended_reason || ""}>
@@ -342,7 +374,7 @@ function HostsPanel() {
                       color="warning"
                       disabled={busyId === h.id}
                       onClick={() =>
-                        setSuspendTarget({ id: h.id, name: h.display_name })
+                        setSuspendTarget({ id: h.id, name: hostName(h) })
                       }
                     >
                       Suspend
@@ -397,7 +429,10 @@ function UsersPanel() {
   }, [load]);
 
   const shown = useMemo(
-    () => (users ?? []).filter((u) => matches(u, query)),
+    () =>
+      (users ?? []).filter((u) =>
+        matchesFields([u.id, u.email, u.connect_status], query),
+      ),
     [users, query],
   );
 
@@ -438,9 +473,9 @@ function UsersPanel() {
             <TableRow>
               <TableCell>Consumer</TableCell>
               <TableCell>Status</TableCell>
-              <TableCell align="right">Active leases</TableCell>
-              <TableCell align="right">Wallet</TableCell>
-              <TableCell align="right">Spend</TableCell>
+              <TableCell>Connect</TableCell>
+              <TableCell>Stripe customer</TableCell>
+              <TableCell>Connect account</TableCell>
               <TableCell>Joined</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -450,19 +485,25 @@ function UsersPanel() {
               <TableRow key={u.id}>
                 <TableCell>
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {u.display_name}
+                    {u.email || u.id}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {u.email}
+                    {u.id}
                   </Typography>
                 </TableCell>
                 <TableCell>
                   <StatusChip status={u.status} />
                 </TableCell>
-                <TableCell align="right">{formatNumber(u.active_leases)}</TableCell>
-                <TableCell align="right">{formatMoney(u.wallet_balance)}</TableCell>
-                <TableCell align="right">{formatMoney(u.spend_total)}</TableCell>
-                <TableCell>{formatDateTime(u.created_at)}</TableCell>
+                <TableCell>{u.connect_status || "—"}</TableCell>
+                <TableCell>
+                  <BoolChip value={u.has_stripe_customer} />
+                </TableCell>
+                <TableCell>
+                  <BoolChip value={u.has_connect_account} />
+                </TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>
+                  {formatDateTime(u.created_at)}
+                </TableCell>
                 <TableCell align="right">
                   {u.status === "suspended" ? (
                     <Tooltip title={u.suspended_reason || ""}>
@@ -484,7 +525,7 @@ function UsersPanel() {
                       color="warning"
                       disabled={busyId === u.id}
                       onClick={() =>
-                        setSuspendTarget({ id: u.id, name: u.display_name })
+                        setSuspendTarget({ id: u.id, name: u.email || u.id })
                       }
                     >
                       Suspend

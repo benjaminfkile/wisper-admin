@@ -22,40 +22,41 @@ const listUsers = vi.mocked(admin.listUsers);
 const suspendHost = vi.mocked(admin.suspendHost);
 const unsuspendHost = vi.mocked(admin.unsuspendHost);
 
+// Real /v1/admin/hosts item fields, live-verified 2026-07-20.
 const HOSTS: AdminHost[] = [
   {
     id: "h-1",
-    display_name: "Acme Compute",
-    email: "ops@acme.dev",
+    owner_user_id: "user-acme",
+    name: "Acme Compute",
+    label: "acme-box",
     status: "active",
-    machines_total: 4,
-    machines_online: 3,
-    earnings_total: 500000,
+    online: true,
+    last_seen_at: "2026-07-19T00:00:00Z",
     created_at: "2026-01-01T00:00:00Z",
   },
   {
     id: "h-2",
-    display_name: "Bad Actor Co",
-    email: "abuse@bad.dev",
+    owner_user_id: "user-bad",
+    name: "Bad Actor Co",
+    label: "bad-box",
     status: "suspended",
-    machines_total: 1,
-    machines_online: 0,
-    earnings_total: 0,
+    online: false,
+    last_seen_at: "2026-03-01T00:00:00Z",
     created_at: "2026-02-01T00:00:00Z",
     suspended_at: "2026-03-01T00:00:00Z",
     suspended_reason: "fraud",
   },
 ];
 
+// Real /v1/admin/users item fields, live-verified 2026-07-20.
 const USERS: AdminUser[] = [
   {
     id: "u-1",
-    display_name: "Dana Consumer",
     email: "dana@example.com",
     status: "active",
-    active_leases: 2,
-    wallet_balance: 1500,
-    spend_total: 30000,
+    connect_status: "complete",
+    has_stripe_customer: true,
+    has_connect_account: false,
     created_at: "2026-01-15T00:00:00Z",
   },
 ];
@@ -120,7 +121,7 @@ describe("Moderation", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: /consumers/i }));
 
-    expect(await screen.findByText("Dana Consumer")).toBeInTheDocument();
+    expect(await screen.findByText("dana@example.com")).toBeInTheDocument();
     expect(listUsers).toHaveBeenCalled();
   });
 

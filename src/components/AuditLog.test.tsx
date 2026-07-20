@@ -34,7 +34,7 @@ const ENTRIES: AuditEntry[] = [
 
 describe("AuditLog", () => {
   beforeEach(() => {
-    getAudit.mockReset().mockResolvedValue({ entries: ENTRIES });
+    getAudit.mockReset().mockResolvedValue({ data: ENTRIES });
   });
   afterEach(() => vi.clearAllMocks());
 
@@ -67,8 +67,8 @@ describe("AuditLog", () => {
   });
 
   it("pages through results with the cursor", async () => {
-    const first: AuditList = { entries: [ENTRIES[0]], next_cursor: "cursor-2" };
-    const second: AuditList = { entries: [ENTRIES[1]] };
+    const first: AuditList = { data: [ENTRIES[0]], next_cursor: "cursor-2" };
+    const second: AuditList = { data: [ENTRIES[1]] };
     getAudit.mockReset();
     getAudit.mockResolvedValueOnce(first);
     getAudit.mockResolvedValueOnce(second);
@@ -85,7 +85,7 @@ describe("AuditLog", () => {
   });
 
   it("shows an empty state when there are no entries", async () => {
-    getAudit.mockReset().mockResolvedValue({ entries: [] });
+    getAudit.mockReset().mockResolvedValue({ data: [] });
     render(<AuditLog />);
     expect(
       await screen.findByText(/No audit entries match these filters/),
