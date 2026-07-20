@@ -17,12 +17,14 @@ export class WisperError extends Error {
   }
 }
 
-// The admin API requires a Cognito JWT (admin group). The auth layer registers a
-// getter here so the client can attach `Authorization: Bearer <token>` without the
-// callers threading the token through every request. Defaults to no token.
+// The admin API requires an admin-scoped credential — a Cognito JWT (admin group)
+// or a Wisper API key (`wck_…`), both sent identically as `Authorization: Bearer
+// <cred>`. The auth layer registers a getter here so the client can attach the
+// header without callers threading the credential through every request. The
+// backend is authoritative and resolves/verifies it on every call. Defaults to none.
 let authTokenGetter: () => string | null = () => null;
 
-/** Register how the client obtains the current Cognito bearer token. */
+/** Register how the client obtains the current bearer credential (JWT or API key). */
 export function setAuthTokenGetter(getter: () => string | null): void {
   authTokenGetter = getter;
 }

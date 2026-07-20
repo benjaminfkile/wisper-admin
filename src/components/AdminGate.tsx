@@ -9,7 +9,9 @@ import Typography from "@mui/material/Typography";
 import BlockIcon from "@mui/icons-material/Block";
 import LockIcon from "@mui/icons-material/Lock";
 import { ADMIN_GROUP } from "@/lib/auth/jwt";
+import { isCognitoConfigured } from "@/lib/auth/storage";
 import { useAuth } from "@/lib/auth/context";
+import ApiKeySignIn from "@/components/ApiKeySignIn";
 
 /** A centered full-height message used by the non-authenticated states. */
 function CenteredMessage({
@@ -69,6 +71,21 @@ export default function AdminGate({ children }: { children: ReactNode }) {
   }
 
   if (status === "unauthenticated") {
+    // With Cognito configured, the Hosted-UI flow is unchanged. Without it (local
+    // dev), the Hosted-UI button would produce no URL, so offer the paste-a-key
+    // form instead — an admin-scoped key from wisper-api's Auth:ApiKeys config map.
+    if (!isCognitoConfigured()) {
+      return (
+        <CenteredMessage
+          icon={<LockIcon color="primary" sx={{ fontSize: 48 }} />}
+          title="Sign in to Wisper Admin"
+          action={<ApiKeySignIn />}
+        >
+          Cognito isn&apos;t configured, so this is local dev: paste an
+          admin-scoped Wisper API key to continue.
+        </CenteredMessage>
+      );
+    }
     return (
       <CenteredMessage
         icon={<LockIcon color="primary" sx={{ fontSize: 48 }} />}
