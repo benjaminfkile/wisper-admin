@@ -16,8 +16,8 @@ import TrendingUpIcon from "@mui/icons-material/TrendingUp";
 import StatTile from "@/components/StatTile";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import { formatDateTime, formatMoney, formatNumber } from "@/lib/format";
-import type { AdminOverview } from "@/lib/wisper/types";
+import { formatMoney, formatNumber } from "@/lib/format";
+import type { AdminHealth, AdminOverview } from "@/lib/wisper/types";
 
 type Load =
   | { status: "loading" }
@@ -91,39 +91,45 @@ export default function OverviewDashboard() {
 }
 
 function OverviewGrid({ data }: { data: AdminOverview }) {
+  // Real /v1/admin/overview keys (live-verified 2026-07-20). Every value goes
+  // through formatMoney/formatNumber, which render a dash for a missing/NaN
+  // field — so a drifted or partial response never crashes a tile.
+  const currency = data.currency;
   const tiles = [
     {
       label: "Revenue (all time)",
-      value: formatMoney(data.revenue_total),
-      hint: `${formatMoney(data.revenue_30d)} in the last 30 days`,
+      value: formatMoney(data.revenue_cents, currency),
+      hint: "Gross platform revenue",
       icon: <TrendingUpIcon />,
     },
     {
+      label: "Wallet liability",
+      value: formatMoney(data.wallet_liability_cents, currency),
+      hint: "Owed to consumer wallets",
+      icon: <PaymentsIcon />,
+    },
+    {
+      label: "Host earnings",
+      value: formatMoney(data.host_earnings_cents, currency),
+      hint: "Accrued to hosts",
+      icon: <PaymentsIcon />,
+    },
+    {
       label: "Active leases",
-      value: formatNumber(data.active_leases),
+      value: formatNumber(data.active_lease_count),
       hint: "Currently running",
       icon: <HubIcon />,
     },
     {
-      label: "Pending payouts",
-      value: formatMoney(data.pending_payouts),
-      hint: "Owed to hosts, not yet settled",
-      icon: <PaymentsIcon />,
-    },
-    {
       label: "Hosts",
-      value: formatNumber(data.hosts_total),
-      hint: (
-        <SuspendedHint total={data.hosts_total} suspended={data.hosts_suspended} />
-      ),
+      value: formatNumber(data.host_count),
+      hint: `${formatNumber(data.online_host_count)} online`,
       icon: <HubIcon />,
     },
     {
       label: "Consumers",
-      value: formatNumber(data.users_total),
-      hint: (
-        <SuspendedHint total={data.users_total} suspended={data.users_suspended} />
-      ),
+      value: formatNumber(data.user_count),
+      hint: "Registered accounts",
       icon: <GroupIcon />,
     },
   ];
@@ -137,24 +143,33 @@ function OverviewGrid({ data }: { data: AdminOverview }) {
           </Grid>
         ))}
       </Grid>
-      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 2 }}>
-        Snapshot generated {formatDateTime(data.generated_at)}
-      </Typography>
+      <Box sx={{ mt: 2 }}>
+        <HealthSummary health={data.health} />
+      </Box>
     </>
   );
 }
 
-/** Green "all active" chip, or an amber count of suspended accounts. */
-function SuspendedHint({ total, suspended }: { total: number; suspended: number }) {
-  if (suspended <= 0) {
-    return <Chip size="small" color="success" variant="outlined" label="All active" />;
+/** Resolve the tolerant AdminHealth (string | object | null) to a status word. */
+function healthStatus(health: AdminHealth | undefined): string | undefined {
+  if (typeof health === "string") return health;
+  if (health && typeof health === "object" && typeof health.status === "string") {
+    return health.status;
   }
+  return undefined;
+}
+
+/** Color-coded platform health chip, or nothing when the field is absent. */
+function HealthSummary({ health }: { health?: AdminHealth }) {
+  const status = healthStatus(health);
+  if (!status) return null;
+  const ok = /^(ok|healthy|up|green|pass(ing)?)$/i.test(status);
   return (
     <Chip
       size="small"
-      color="warning"
       variant="outlined"
-      label={`${formatNumber(suspended)} of ${formatNumber(total)} suspended`}
+      color={ok ? "success" : "warning"}
+      label={`Health: ${status}`}
     />
   );
 }

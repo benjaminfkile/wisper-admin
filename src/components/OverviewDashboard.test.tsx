@@ -12,16 +12,17 @@ vi.mock("@/lib/wisper/admin", () => ({
 
 const getOverview = vi.mocked(admin.getOverview);
 
+// Real /v1/admin/overview shape, live-verified 2026-07-20.
 const OVERVIEW: AdminOverview = {
-  revenue_total: 1234567,
-  revenue_30d: 45600,
-  active_leases: 12,
-  hosts_total: 8,
-  hosts_suspended: 2,
-  users_total: 40,
-  users_suspended: 0,
-  pending_payouts: 9900,
-  generated_at: "2026-07-12T00:00:00Z",
+  currency: "usd",
+  revenue_cents: 1234567,
+  wallet_liability_cents: 45600,
+  host_earnings_cents: 9900,
+  active_lease_count: 12,
+  host_count: 8,
+  online_host_count: 5,
+  user_count: 40,
+  health: "ok",
 };
 
 describe("OverviewDashboard", () => {
@@ -32,14 +33,24 @@ describe("OverviewDashboard", () => {
     getOverview.mockResolvedValue(OVERVIEW);
     render(<OverviewDashboard />);
 
-    expect(await screen.findByText("$12,345.67")).toBeInTheDocument();
-    expect(screen.getByText("$456.00 in the last 30 days")).toBeInTheDocument();
+    expect(await screen.findByText("$12,345.67")).toBeInTheDocument(); // revenue
+    expect(screen.getByText("$456.00")).toBeInTheDocument(); // wallet liability
+    expect(screen.getByText("$99.00")).toBeInTheDocument(); // host earnings
     expect(screen.getByText("12")).toBeInTheDocument(); // active leases
-    expect(screen.getByText("$99.00")).toBeInTheDocument(); // pending payouts
-    // Suspended hosts surface a warning chip; all-active consumers a success chip.
-    expect(screen.getByText("2 of 8 suspended")).toBeInTheDocument();
-    expect(screen.getByText("All active")).toBeInTheDocument();
-    expect(screen.getByText(/Snapshot generated/)).toBeInTheDocument();
+    expect(screen.getByText("8")).toBeInTheDocument(); // hosts
+    expect(screen.getByText("5 online")).toBeInTheDocument();
+    expect(screen.getByText("40")).toBeInTheDocument(); // consumers
+    expect(screen.getByText("Health: ok")).toBeInTheDocument();
+  });
+
+  it("renders dashes instead of crashing when numeric fields are missing", async () => {
+    // Contract drift: a partial body must not throw (the original crash bug).
+    getOverview.mockResolvedValue({ currency: "usd" } as AdminOverview);
+    render(<OverviewDashboard />);
+
+    expect(await screen.findByText("Active leases")).toBeInTheDocument();
+    // Every numeric tile falls back to an em-dash rather than "$NaN"/"NaN".
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 
   it("shows an error with a retry that refetches", async () => {

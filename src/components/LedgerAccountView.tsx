@@ -25,12 +25,16 @@ import { WisperError } from "@/lib/wisper/client";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import type { LedgerAccount } from "@/lib/wisper/types";
 
-/** Signed amount with a color: green for credits, red for debits. */
-function SignedAmount({ amount }: { amount: number }) {
-  const sign = amount >= 0 ? "+" : "−";
+/** Signed amount with a color: green for credits, red for debits. Renders a
+ *  dash for a missing amount rather than a misleading zero. */
+function SignedAmount({ amount }: { amount?: number }) {
+  if (amount == null || !Number.isFinite(amount)) {
+    return <Box component="span">—</Box>;
+  }
+  const positive = amount >= 0;
   return (
-    <Box component="span" sx={{ color: amount >= 0 ? "success.main" : "error.main" }}>
-      {sign}
+    <Box component="span" sx={{ color: positive ? "success.main" : "error.main" }}>
+      {positive ? "+" : "−"}
       {formatMoney(Math.abs(amount))}
     </Box>
   );
@@ -135,10 +139,14 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
             label="Owner"
             value={
               <Typography variant="h6" component="p" sx={{ fontWeight: 700 }}>
-                {account.owner_id}
+                {account.owner_id || "—"}
               </Typography>
             }
-            hint={<Chip size="small" variant="outlined" label={account.owner_type} />}
+            hint={
+              account.owner_type ? (
+                <Chip size="small" variant="outlined" label={account.owner_type} />
+              ) : undefined
+            }
           />
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 4 }}>

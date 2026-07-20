@@ -45,15 +45,22 @@ type Form = {
   host_signups_enabled: boolean;
 };
 
-function toForm(p: PolicyRules): Form {
+/** Stringify a possibly-missing numeric field for a controlled text input. */
+function numStr(v: number | undefined | null): string {
+  return typeof v === "number" && Number.isFinite(v) ? String(v) : "";
+}
+
+/** Build the editable form from the active policy revision (fields are optional
+ *  on the wire, so each is defaulted). */
+function toForm(p: Partial<PolicyRules>): Form {
   return {
-    platform_fee_bps: String(p.platform_fee_bps),
-    min_price_per_hour: String(p.min_price_per_hour),
-    max_price_per_hour: String(p.max_price_per_hour),
-    min_topup: String(p.min_topup),
-    default_network: p.default_network,
-    max_active_leases_per_user: String(p.max_active_leases_per_user),
-    host_signups_enabled: p.host_signups_enabled,
+    platform_fee_bps: numStr(p.platform_fee_bps),
+    min_price_per_hour: numStr(p.min_price_per_hour),
+    max_price_per_hour: numStr(p.max_price_per_hour),
+    min_topup: numStr(p.min_topup),
+    default_network: p.default_network ?? "none",
+    max_active_leases_per_user: numStr(p.max_active_leases_per_user),
+    host_signups_enabled: p.host_signups_enabled ?? false,
   };
 }
 
@@ -113,7 +120,7 @@ export default function PolicyEditor() {
     try {
       const p = await admin.getPolicy();
       setPolicy(p);
-      setForm(toForm(p));
+      setForm(toForm(p.active ?? {}));
     } catch (err) {
       setLoadError(
         err instanceof WisperError ? err.message : "Failed to load the policy.",
@@ -133,7 +140,7 @@ export default function PolicyEditor() {
 
   const dirty = useMemo(() => {
     if (!policy || !form) return false;
-    return JSON.stringify(form) !== JSON.stringify(toForm(policy));
+    return JSON.stringify(form) !== JSON.stringify(toForm(policy.active ?? {}));
   }, [policy, form]);
 
   const onSave = async () => {
@@ -149,7 +156,7 @@ export default function PolicyEditor() {
     try {
       const updated = await admin.updatePolicy(parsed.rules);
       setPolicy(updated);
-      setForm(toForm(updated));
+      setForm(toForm(updated.active ?? parsed.rules));
       setSaved(true);
     } catch (err) {
       setSaveError(
@@ -193,12 +200,14 @@ export default function PolicyEditor() {
     ? "—"
     : formatBps(Number(form.platform_fee_bps));
 
+  const active = policy.active ?? {};
+
   return (
     <Box>
       <Header
-        version={policy.version}
-        updatedAt={policy.updated_at}
-        updatedBy={policy.updated_by}
+        version={active.version}
+        updatedAt={active.updated_at}
+        updatedBy={active.updated_by}
       />
 
       <Card variant="outlined" sx={{ mb: 4 }}>
@@ -328,7 +337,7 @@ export default function PolicyEditor() {
                 {saving ? "Saving…" : "Save changes"}
               </Button>
               <Button
-                onClick={() => setForm(toForm(policy))}
+                onClick={() => setForm(toForm(active))}
                 disabled={saving || !dirty}
               >
                 Reset
@@ -343,7 +352,7 @@ export default function PolicyEditor() {
         </CardContent>
       </Card>
 
-      <VersionHistory history={policy.history} />
+      <VersionHistory history={policy.versions} />
     </Box>
   );
 }
@@ -409,18 +418,26 @@ function VersionHistory({ history }: { history?: PolicyVersion[] }) {
               </TableRow>
             </TableHead>
             <TableBody>
-              {history.map((v) => (
-                <TableRow key={v.version}>
-                  <TableCell>v{v.version}</TableCell>
+              {history.map((v, i) => (
+                <TableRow key={v.version ?? i}>
+                  <TableCell>{v.version != null ? `v${v.version}` : "—"}</TableCell>
                   <TableCell align="right">{formatBps(v.platform_fee_bps)}</TableCell>
                   <TableCell align="right">
                     {formatMoney(v.min_price_per_hour)} –{" "}
                     {formatMoney(v.max_price_per_hour)}
                   </TableCell>
                   <TableCell align="right">{formatMoney(v.min_topup)}</TableCell>
-                  <TableCell align="right">{v.max_active_leases_per_user}</TableCell>
-                  <TableCell>{v.default_network}</TableCell>
-                  <TableCell>{v.host_signups_enabled ? "on" : "off"}</TableCell>
+                  <TableCell align="right">
+                    {v.max_active_leases_per_user ?? "—"}
+                  </TableCell>
+                  <TableCell>{v.default_network ?? "—"}</TableCell>
+                  <TableCell>
+                    {v.host_signups_enabled == null
+                      ? "—"
+                      : v.host_signups_enabled
+                        ? "on"
+                        : "off"}
+                  </TableCell>
                   <TableCell>
                     {formatDateTime(v.updated_at)}
                     {v.updated_by ? ` · ${v.updated_by}` : ""}

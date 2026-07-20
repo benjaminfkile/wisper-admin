@@ -50,7 +50,7 @@ export default function AuditLog() {
     };
     try {
       const res = await admin.getAudit(query);
-      setEntries(res.entries);
+      setEntries(res.data);
       setCursor(res.next_cursor);
     } catch (err) {
       setEntries([]);
@@ -90,7 +90,7 @@ export default function AuditLog() {
         limit: PAGE,
         cursor,
       });
-      setEntries((prev) => [...prev, ...res.entries]);
+      setEntries((prev) => [...prev, ...res.data]);
       setCursor(res.next_cursor);
     } catch (err) {
       setError(
@@ -199,10 +199,20 @@ export default function AuditLog() {
                       <Chip size="small" variant="outlined" label={e.action} />
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2">{e.target_type}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {e.target_id}
-                      </Typography>
+                      {e.target_type || e.target_id ? (
+                        <>
+                          <Typography variant="body2">
+                            {e.target_type || "—"}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {e.target_id}
+                          </Typography>
+                        </>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Metadata metadata={e.metadata} />

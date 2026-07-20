@@ -2,12 +2,29 @@
 // minor units (cents); fees are basis points. Formatting is locale-fixed to
 // "en-US" so tests and the UI agree regardless of the host environment.
 
-/** Format an integer minor-unit amount (e.g. cents) as a currency string. */
-export function formatMoney(minor: number, currency = "USD"): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-  }).format(minor / 100);
+/** Em-dash placeholder rendered for a missing/absent numeric value. */
+export const DASH = "—";
+
+/** Format an integer minor-unit amount (e.g. cents) as a currency string.
+ *  A missing/non-finite amount renders as a dash rather than "$NaN", so
+ *  callers can pass fields straight off a (possibly drifted) API response. */
+export function formatMoney(
+  minor: number | null | undefined,
+  currency = "USD",
+): string {
+  if (minor == null || !Number.isFinite(minor)) return DASH;
+  let cur = currency;
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: cur }).format(
+      minor / 100,
+    );
+  } catch {
+    // An unrecognized currency code from the API must not crash formatting.
+    cur = "USD";
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: cur }).format(
+      minor / 100,
+    );
+  }
 }
 
 /** Parse a user-entered major-unit amount (e.g. "5", "5.00", "$5.5") into
@@ -21,19 +38,25 @@ export function parseMoneyToMinor(value: string): number | null {
   return Math.round(num * 100);
 }
 
-/** Format basis points as a percentage (500 → "5%", 1250 → "12.5%"). */
-export function formatBps(bps: number): string {
+/** Format basis points as a percentage (500 → "5%", 1250 → "12.5%").
+ *  A missing/non-finite value renders as a dash. */
+export function formatBps(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps)) return DASH;
   const pct = bps / 100;
   return `${pct.toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
 
-/** Format an integer count with thousands separators. */
-export function formatNumber(n: number): string {
+/** Format an integer count with thousands separators. A missing/non-finite
+ *  value renders as a dash so a drifted or absent field never shows "NaN". */
+export function formatNumber(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return DASH;
   return n.toLocaleString("en-US");
 }
 
-/** Format an RFC3339 timestamp for display; echoes the input if unparseable. */
-export function formatDateTime(iso: string): string {
+/** Format an RFC3339 timestamp for display; echoes the input if unparseable
+ *  and renders a dash for a missing value. */
+export function formatDateTime(iso: string | null | undefined): string {
+  if (iso == null || iso === "") return DASH;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });

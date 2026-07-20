@@ -30,31 +30,65 @@ describe("admin client", () => {
   });
 
   it("GET overview hits the proxied path with the bearer token", async () => {
+    // Real /v1/admin/overview shape, live-verified 2026-07-20.
     const calls = stubFetch({
       body: {
-        revenue_total: 100,
-        revenue_30d: 10,
-        active_leases: 3,
-        hosts_total: 5,
-        hosts_suspended: 1,
-        users_total: 8,
-        users_suspended: 0,
-        pending_payouts: 42,
-        generated_at: "2026-07-12T00:00:00Z",
+        currency: "usd",
+        revenue_cents: 100,
+        wallet_liability_cents: 40,
+        host_earnings_cents: 60,
+        active_lease_count: 3,
+        host_count: 5,
+        online_host_count: 4,
+        user_count: 8,
+        health: "ok",
       },
     });
     const overview = await admin.getOverview();
-    expect(overview.active_leases).toBe(3);
+    expect(overview.active_lease_count).toBe(3);
+    expect(overview.revenue_cents).toBe(100);
     expect(calls[0].url).toBe("/wisper/v1/admin/overview");
     expect((calls[0].init.headers as Record<string, string>).Authorization).toBe(
       "Bearer jwt-token",
     );
   });
 
-  it("listHosts unwraps the {hosts} envelope", async () => {
-    stubFetch({ body: { hosts: [{ id: "h-1" }, { id: "h-2" }] } });
+  it("getOverview tolerates an empty body without throwing", async () => {
+    stubFetch({ body: undefined });
+    await expect(admin.getOverview()).resolves.toEqual({});
+  });
+
+  it("listHosts unwraps the {data, next_offset} envelope", async () => {
+    const calls = stubFetch({
+      body: { data: [{ id: "h-1" }, { id: "h-2" }], next_offset: 2 },
+    });
     const hosts = await admin.listHosts();
     expect(hosts.map((h) => h.id)).toEqual(["h-1", "h-2"]);
+    expect(calls[0].url).toBe("/wisper/v1/admin/hosts");
+  });
+
+  it("listHosts degrades a misshaped envelope to an empty list", async () => {
+    stubFetch({ body: { unexpected: true } });
+    await expect(admin.listHosts()).resolves.toEqual([]);
+  });
+
+  it("listUsers unwraps the {data, next_offset} envelope", async () => {
+    stubFetch({
+      body: {
+        data: [
+          {
+            id: "u-1",
+            email: "dana@example.com",
+            status: "active",
+            has_stripe_customer: true,
+            has_connect_account: false,
+          },
+        ],
+        next_offset: null,
+      },
+    });
+    const users = await admin.listUsers();
+    expect(users[0].email).toBe("dana@example.com");
   });
 
   it("updatePolicy PUTs a JSON body", async () => {
@@ -112,12 +146,51 @@ describe("admin client", () => {
     expect(JSON.parse(calls[0].init.body as string).amount).toBe(-250);
   });
 
-  it("getAudit encodes query params", async () => {
-    const calls = stubFetch({ body: { entries: [] } });
-    await admin.getAudit({ actor: "admin@wisper.dev", limit: 25 });
+  it("getAudit encodes query params and unwraps {data, next_cursor}", async () => {
+    const calls = stubFetch({
+      body: {
+        data: [
+          {
+            id: "e-1",
+            actor_id: "admin@wisper.dev",
+            action: "host.suspend",
+            target_type: "host",
+            target_id: "h-2",
+            context: { reason: "fraud" },
+            created_at: "2026-07-20T00:00:00Z",
+          },
+        ],
+        next_cursor: "cursor-2",
+      },
+    });
+    const res = await admin.getAudit({ actor: "admin@wisper.dev", limit: 25 });
     expect(calls[0].url).toBe(
       "/wisper/v1/admin/audit?actor=admin%40wisper.dev&limit=25",
     );
+    // Tolerant normalization maps actor_id -> actor and context -> metadata.
+    expect(res.data[0]).toMatchObject({
+      id: "e-1",
+      actor: "admin@wisper.dev",
+      action: "host.suspend",
+      target_type: "host",
+      metadata: { reason: "fraud" },
+    });
+    expect(res.next_cursor).toBe("cursor-2");
+  });
+
+  it("getPolicy unwraps the {active, versions} envelope", async () => {
+    stubFetch({
+      body: {
+        active: { version: 3, platform_fee_bps: 500 },
+        versions: [
+          { version: 3, platform_fee_bps: 500 },
+          { version: 2, platform_fee_bps: 400 },
+        ],
+      },
+    });
+    const policy = await admin.getPolicy();
+    expect(policy.active?.version).toBe(3);
+    expect(policy.versions).toHaveLength(2);
   });
 
   it("getLedgerAccount targets the account path", async () => {

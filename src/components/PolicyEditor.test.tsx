@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import PolicyEditor from "./PolicyEditor";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import type { AdminPolicy } from "@/lib/wisper/types";
+import type { AdminPolicy, PolicyVersion } from "@/lib/wisper/types";
 
 vi.mock("@/lib/wisper/admin", () => ({
   admin: { getPolicy: vi.fn(), updatePolicy: vi.fn() },
@@ -13,7 +13,9 @@ vi.mock("@/lib/wisper/admin", () => ({
 const getPolicy = vi.mocked(admin.getPolicy);
 const updatePolicy = vi.mocked(admin.updatePolicy);
 
-const POLICY: AdminPolicy = {
+// Real /v1/admin/policy envelope, live-verified 2026-07-20: { active, versions }.
+const ACTIVE: PolicyVersion = {
+  version: 3,
   platform_fee_bps: 500,
   min_price_per_hour: 100,
   max_price_per_hour: 5000,
@@ -21,24 +23,24 @@ const POLICY: AdminPolicy = {
   default_network: "egress",
   max_active_leases_per_user: 4,
   host_signups_enabled: true,
-  version: 3,
   updated_at: "2026-07-10T12:00:00Z",
   updated_by: "admin@wisper.dev",
-  history: [
-    {
-      version: 2,
-      platform_fee_bps: 400,
-      min_price_per_hour: 100,
-      max_price_per_hour: 4000,
-      min_topup: 1000,
-      default_network: "egress",
-      max_active_leases_per_user: 3,
-      host_signups_enabled: true,
-      updated_at: "2026-06-01T12:00:00Z",
-      updated_by: "founder@wisper.dev",
-    },
-  ],
 };
+
+const V2: PolicyVersion = {
+  version: 2,
+  platform_fee_bps: 400,
+  min_price_per_hour: 100,
+  max_price_per_hour: 4000,
+  min_topup: 1000,
+  default_network: "egress",
+  max_active_leases_per_user: 3,
+  host_signups_enabled: true,
+  updated_at: "2026-06-01T12:00:00Z",
+  updated_by: "founder@wisper.dev",
+};
+
+const POLICY: AdminPolicy = { active: ACTIVE, versions: [ACTIVE, V2] };
 
 describe("PolicyEditor", () => {
   beforeEach(() => {
@@ -53,9 +55,10 @@ describe("PolicyEditor", () => {
 
     expect(await screen.findByLabelText("Platform fee")).toHaveValue(500);
     expect(screen.getByLabelText("Minimum top-up")).toHaveValue(1000);
-    expect(screen.getByText("v3")).toBeInTheDocument();
+    // The active version chip renders (also appears in the history table).
+    expect(screen.getAllByText("v3").length).toBeGreaterThan(0);
 
-    // Version history table renders the prior revision.
+    // Version history table renders the revisions.
     const table = screen.getByRole("table", { name: /policy version history/i });
     expect(within(table).getByText("v2")).toBeInTheDocument();
     expect(within(table).getByText("founder@wisper.dev", { exact: false })).toBeInTheDocument();
@@ -63,7 +66,11 @@ describe("PolicyEditor", () => {
 
   it("saves edits via updatePolicy and confirms success", async () => {
     getPolicy.mockResolvedValue(POLICY);
-    updatePolicy.mockResolvedValue({ ...POLICY, version: 4, min_topup: 2000 });
+    const savedActive: PolicyVersion = { ...ACTIVE, version: 4, min_topup: 2000 };
+    updatePolicy.mockResolvedValue({
+      active: savedActive,
+      versions: [savedActive, ACTIVE, V2],
+    });
     render(<PolicyEditor />);
 
     const topup = await screen.findByLabelText("Minimum top-up");

@@ -1,5 +1,32 @@
 // TypeScript types for the Wisper API (see docs/API.md in the wisper-api repo).
 // Expanded as endpoints are built; this is the shared foundation.
+//
+// ---------------------------------------------------------------------------
+// CONTRACT AUTHORITY
+// ---------------------------------------------------------------------------
+// The admin surface below was LIVE-VERIFIED against a running wisper-api on
+// 2026-07-20 (the first time this app ran against a real API — the API-key
+// sign-in made it possible). Before then the shapes were guesses and had never
+// been exercised; that drift crashed the overview and emptied the moderation /
+// audit / policy lists. The AUTHORITATIVE contract is wisper-api's docs/API.md;
+// these types mirror it plus the shapes captured on 2026-07-20:
+//
+//   GET /v1/admin/overview -> { currency, revenue_cents, wallet_liability_cents,
+//       host_earnings_cents, active_lease_count, host_count, online_host_count,
+//       user_count, health }
+//   GET /v1/admin/hosts    -> { data: AdminHost[], next_offset }
+//       item: { id, owner_user_id, name, label, status, last_seen_at, created_at, ... }
+//   GET /v1/admin/users    -> { data: AdminUser[], next_offset }
+//       item: { id, email, status, connect_status, has_stripe_customer,
+//               has_connect_account, created_at }
+//   GET /v1/admin/audit    -> { data: AuditEntry[], next_cursor }
+//   GET /v1/admin/policy   -> { active, versions }
+//
+// Every collection is unwrapped tolerantly at the client boundary (admin.ts):
+// a missing/misshaped envelope degrades to an empty list and numeric fields are
+// optional, so a component never crashes on further shape drift — it renders a
+// dash. When in doubt, docs/API.md wins over these declarations.
+// ---------------------------------------------------------------------------
 
 /** Liveness (docs/API.md §4). */
 export interface HealthResponse {
@@ -31,33 +58,46 @@ export type WispNetwork = "none" | "open" | "egress";
 // ---------------------------------------------------------------------------
 // Admin surface (/v1/admin/*). Contract embedded here; the authoritative docs
 // live in wisper-api (docs/API.md §admin). Amounts are integer minor units
-// (e.g. cents) unless noted, matching the ledger.
+// (e.g. cents) unless noted, matching the ledger. Every response field is
+// optional so tolerant parsing + guarded formatting survive contract drift.
 // ---------------------------------------------------------------------------
 
 /** Suspension state shared by hosts and users. */
 export type AccountStatus = "active" | "suspended";
 
-/** GET /v1/admin/overview — platform snapshot for the dashboard. */
+/** Platform health rollup embedded in the overview. The API may return a plain
+ *  status string or a small object; both are tolerated. */
+export type AdminHealth =
+  | string
+  | { status?: string; [key: string]: unknown }
+  | null;
+
+/** GET /v1/admin/overview — platform snapshot for the dashboard (real keys,
+ *  live-verified 2026-07-20). All numerics optional: a missing field renders a
+ *  dash rather than crashing the tile. */
 export interface AdminOverview {
-  /** Gross revenue to date, in minor units. */
-  revenue_total: number;
-  /** Revenue booked in the trailing 30 days, in minor units. */
-  revenue_30d: number;
+  /** ISO currency code for the *_cents amounts below. */
+  currency?: string;
+  /** Gross platform revenue to date, in minor units. */
+  revenue_cents?: number;
+  /** Outstanding consumer wallet balances (a liability), in minor units. */
+  wallet_liability_cents?: number;
+  /** Earnings accrued to hosts, in minor units. */
+  host_earnings_cents?: number;
   /** Currently active leases. */
-  active_leases: number;
-  /** Registered hosts and how many are currently suspended. */
-  hosts_total: number;
-  hosts_suspended: number;
-  /** Registered consumer accounts and how many are currently suspended. */
-  users_total: number;
-  users_suspended: number;
-  /** Payouts owed to hosts but not yet settled, in minor units. */
-  pending_payouts: number;
-  /** Server-side timestamp the snapshot was computed (RFC3339). */
-  generated_at: string;
+  active_lease_count?: number;
+  /** Registered hosts, and how many are currently online. */
+  host_count?: number;
+  online_host_count?: number;
+  /** Registered consumer accounts. */
+  user_count?: number;
+  /** Platform health rollup (string or object; see AdminHealth). */
+  health?: AdminHealth;
 }
 
-/** The editable policy & pricing fields (the PUT body). */
+/** The editable policy & pricing fields (the PUT body). These field names are
+ *  the app's best mapping of docs/API.md's policy body; every consumer reads
+ *  them tolerantly so an unexpected field simply renders blank/dash. */
 export interface PolicyRules {
   /** Platform take rate applied to each lease, in basis points (10000 = 100%). */
   platform_fee_bps: number;
@@ -74,65 +114,74 @@ export interface PolicyRules {
   host_signups_enabled: boolean;
 }
 
-/** A single point-in-time revision of the policy (server-populated). */
-export interface PolicyVersion extends PolicyRules {
+/** A single point-in-time revision of the policy (server-populated). All fields
+ *  optional: the server owns them and versions may omit any. */
+export interface PolicyVersion extends Partial<PolicyRules> {
   /** Monotonic revision number; the current policy has the highest. */
-  version: number;
-  /** When this revision was written (RFC3339) and by which admin. */
-  updated_at: string;
-  updated_by: string;
-}
-
-/** Platform-wide policy & pricing rules (GET/PUT /v1/admin/policy).
- *  On GET the server also returns the current version and prior revisions. */
-export interface AdminPolicy extends PolicyRules {
-  /** Current revision number (server-populated on GET). */
   version?: number;
-  /** Last-write metadata (server-populated on GET). */
+  /** When this revision was written (RFC3339) and by which admin. */
   updated_at?: string;
   updated_by?: string;
-  /** Prior revisions, newest first (server-populated on GET). */
-  history?: PolicyVersion[];
 }
 
-/** A registered host (GET /v1/admin/hosts). */
+/** GET /v1/admin/policy — the active policy plus its version history.
+ *  Live-verified envelope (2026-07-20): `{ active, versions }`. */
+export interface AdminPolicy {
+  /** The current/active policy revision. */
+  active?: PolicyVersion;
+  /** All revisions, newest first (includes `active`). */
+  versions?: PolicyVersion[];
+}
+
+/** A registered host (GET /v1/admin/hosts item). Live-verified fields
+ *  2026-07-20; extras the API adds are ignored. */
 export interface AdminHost {
   id: string;
-  display_name: string;
-  email: string;
-  status: AccountStatus;
-  /** Machines this host has advertised, and how many are online. */
-  machines_total: number;
-  machines_online: number;
-  /** Lifetime earnings, in minor units. */
-  earnings_total: number;
-  created_at: string;
+  /** The user who owns this host. */
+  owner_user_id?: string;
+  /** Machine name and human label. */
+  name?: string;
+  label?: string;
+  /** Moderation/account status (e.g. "active", "suspended"). */
+  status?: string;
+  /** Whether the agent is currently connected. */
+  online?: boolean;
+  wisp_version?: string;
+  agent_version?: string;
+  last_seen_at?: string;
+  created_at?: string;
+  /** Present only on suspended hosts. */
   suspended_at?: string;
   suspended_reason?: string;
 }
 
-/** A registered consumer account (GET /v1/admin/users). */
+/** A registered consumer account (GET /v1/admin/users item). Live-verified
+ *  fields 2026-07-20. */
 export interface AdminUser {
   id: string;
-  display_name: string;
-  email: string;
-  status: AccountStatus;
-  active_leases: number;
-  /** Wallet balance, in minor units. */
-  wallet_balance: number;
-  /** Lifetime spend, in minor units. */
-  spend_total: number;
-  created_at: string;
+  email?: string;
+  /** Moderation/account status (e.g. "active", "suspended"). */
+  status?: string;
+  /** Stripe Connect onboarding status for hosts who also consume. */
+  connect_status?: string;
+  /** Whether the account has a Stripe customer / Connect account provisioned. */
+  has_stripe_customer?: boolean;
+  has_connect_account?: boolean;
+  created_at?: string;
+  /** Present only on suspended users. */
   suspended_at?: string;
   suspended_reason?: string;
 }
 
-/** List envelopes returned by the collection endpoints. */
+/** Collection envelopes returned by the admin list endpoints. `data` is the
+ *  page of items; the cursor/offset advances it. */
 export interface AdminHostList {
-  hosts: AdminHost[];
+  data: AdminHost[];
+  next_offset?: number | string | null;
 }
 export interface AdminUserList {
-  users: AdminUser[];
+  data: AdminUser[];
+  next_offset?: number | string | null;
 }
 
 /** Body for suspend actions (unsuspend takes no body). */
@@ -162,28 +211,31 @@ export interface LedgerMutationResult {
   id: string;
   account_id: string;
   amount: number;
-  reason: string;
-  created_at: string;
-  created_by: string;
+  reason?: string;
+  created_at?: string;
+  created_by?: string;
 }
 
-/** A single audit-log entry (GET /v1/admin/audit). */
+/** A single audit-log entry (GET /v1/admin/audit). Field names are read
+ *  tolerantly in the client (actor/actor_id/actor_email, target/target_*,
+ *  metadata/context) so the log renders whatever the API supplies. */
 export interface AuditEntry {
   id: string;
   /** Actor who performed the action (admin identity). */
-  actor: string;
+  actor?: string;
   /** Action verb, e.g. "host.suspend", "policy.update", "refund.create". */
-  action: string;
+  action?: string;
   /** Affected resource type + id. */
-  target_type: string;
-  target_id: string;
+  target_type?: string;
+  target_id?: string;
   /** Free-form structured context for the action. */
   metadata?: Record<string, unknown>;
-  created_at: string;
+  created_at?: string;
 }
 
+/** GET /v1/admin/audit envelope: a page of entries + an opaque cursor. */
 export interface AuditList {
-  entries: AuditEntry[];
+  data: AuditEntry[];
   /** Opaque cursor for the next page, when more entries exist. */
   next_cursor?: string;
 }
@@ -202,21 +254,21 @@ export interface AuditQuery {
 export interface LedgerAccount {
   id: string;
   /** Owning subject (host or user) and its kind. */
-  owner_type: "host" | "user" | "platform";
-  owner_id: string;
+  owner_type?: "host" | "user" | "platform" | string;
+  owner_id?: string;
   /** Current balance, in minor units. */
-  balance: number;
-  currency: string;
+  balance?: number;
+  currency?: string;
   entries: LedgerEntry[];
 }
 
 export interface LedgerEntry {
   id: string;
   /** Signed amount in minor units. */
-  amount: number;
+  amount?: number;
   /** Running balance after this entry, in minor units. */
-  balance_after: number;
-  kind: string;
+  balance_after?: number;
+  kind?: string;
   reference?: string;
-  created_at: string;
+  created_at?: string;
 }
