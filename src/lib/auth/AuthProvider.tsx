@@ -1,35 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { setAuthTokenGetter } from "@/lib/wisper/client";
 import { AuthContext, type AuthContextValue } from "./context";
-import { resolveAuth, type AuthState } from "./jwt";
+import { resolveApiKeyGate, resolveCredential } from "./gate";
+import type { AuthState, AuthStatus } from "./jwt";
 import {
   captureTokenFromHash,
+  clearStoredCredentials,
   hostedUiSignInUrl,
-  readStoredToken,
-  writeStoredToken,
+  readStoredCredential,
+  writeStoredApiKey,
 } from "./storage";
 
 const LOADING: AuthState = { status: "loading", user: null };
 
 /** Provides admin auth state to the tree. On mount it captures any token from a
- *  Cognito redirect, then resolves the stored token into a gate-ready state and
- *  wires the API client to send it as a bearer token. */
+ *  Cognito redirect, then resolves the held credential into a gate-ready state
+ *  and wires the API client to send it as a bearer token. The credential is
+ *  either a Cognito id-token (decoded client-side) or a pasted Wisper API key
+ *  (authorized by a backend probe — see gate.ts). */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // `token` holds the raw JWT; `state` is its resolved gate view. Kept together
-  // so the client's token getter and the gate never disagree.
-  const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<AuthState>(LOADING);
+  // The raw bearer we send (id-token or API key). Held in a ref so the client's
+  // token getter always reads the current value — including mid-probe, when the
+  // just-set API key must be the bearer for the /v1/admin/overview call.
+  const credentialRef = useRef<string | null>(null);
 
-  // Give the API client a live view of the current token.
-  useEffect(() => setAuthTokenGetter(() => token), [token]);
+  // Give the API client a live view of the current credential.
+  useEffect(() => {
+    setAuthTokenGetter(() => credentialRef.current);
+  }, []);
 
   useEffect(() => {
+    let active = true;
     const captured = captureTokenFromHash();
-    const current = captured ?? readStoredToken();
-    setToken(current);
-    setState(resolveAuth(current));
+    const credential = captured ?? readStoredCredential();
+    credentialRef.current = credential;
+    resolveCredential(credential).then((res) => {
+      if (!active) return;
+      if (res.clear) {
+        credentialRef.current = null;
+        clearStoredCredentials();
+      }
+      setState(res.state);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const signIn = useCallback(() => {
@@ -37,15 +55,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (url && typeof window !== "undefined") window.location.assign(url);
   }, []);
 
+  const signInWithKey = useCallback(async (key: string): Promise<AuthStatus> => {
+    const trimmed = key.trim();
+    // Persist and make it the live bearer before probing the backend.
+    writeStoredApiKey(trimmed);
+    credentialRef.current = trimmed;
+    setState(LOADING);
+    const res = await resolveApiKeyGate();
+    if (res.clear) {
+      credentialRef.current = null;
+      writeStoredApiKey(null);
+    }
+    setState(res.state);
+    return res.state.status;
+  }, []);
+
   const signOut = useCallback(() => {
-    writeStoredToken(null);
-    setToken(null);
+    clearStoredCredentials();
+    credentialRef.current = null;
     setState({ status: "unauthenticated", user: null });
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ ...state, signIn, signOut }),
-    [state, signIn, signOut],
+    () => ({ ...state, signIn, signInWithKey, signOut }),
+    [state, signIn, signInWithKey, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

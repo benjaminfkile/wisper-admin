@@ -29,12 +29,39 @@ npm run build    # production build (type-check + lint)
 npm test         # Vitest
 ```
 
+## Local development (no Cognito, API-key sign-in)
+
+To run the admin app against a **local wisper-api** with no Cognito, sign in with
+a pasted API key instead of the Hosted UI.
+
+1. In `wisper-api`, define an **admin-scoped** key in the `Auth:ApiKeys` config
+   map — a `wck_live_<64-hex>` key whose scopes include `admin`. (Keys are minted
+   via `/v1/me/api-keys`, which is JWT-only; for local dev you just declare one in
+   config.) Start the API on `127.0.0.1:8090`.
+2. In this app, point the proxy at that API and leave the Cognito vars unset:
+
+   ```sh
+   # .env.local
+   WISPER_API_URL=http://127.0.0.1:8090
+   # (no NEXT_PUBLIC_COGNITO_DOMAIN / NEXT_PUBLIC_COGNITO_CLIENT_ID)
+   ```
+
+3. `npm run dev`, open the app, and paste the admin-scoped key into the sign-in
+   form (a password field — the key is never echoed or logged).
+
+The gate authorizes the key **by asking the backend**: it probes
+`GET /v1/admin/overview` with the key as the bearer — `200` signs you in, `403`
+shows *not authorized* (the key lacks the `admin` scope), and `401` clears the
+bad/revoked key. This is backend-authoritative, unlike the Cognito path's
+client-side JWT decode (a UX fast-path only). Sign-out clears whichever
+credential is held.
+
 ## Layout
 
 ```
 src/app/            App Router: layout (theme + AuthProvider) + gated overview page
-src/components/     UI: AdminGate (auth gate), AdminShell (AppBar/nav), HealthBadge
-src/lib/auth/       Cognito auth: JWT decode, AuthProvider/context, token storage
+src/components/     UI: AdminGate (auth gate), ApiKeySignIn (local-dev key form), AdminShell, HealthBadge
+src/lib/auth/       auth: JWT decode, gate resolution (JWT/API-key), AuthProvider/context, credential storage
 src/lib/wisper/     typed API client + /v1/admin client + types (mirrors wisper-api)
 src/theme.ts        MUI dark theme (admin amber accent)
 ```
@@ -49,3 +76,7 @@ otherwise. The `/v1/admin` API client sends the token as a bearer credential; th
 Wisper API independently verifies the signature and group on every call, so the
 client-side decode is never trusted for security. Configure the Hosted UI via
 `NEXT_PUBLIC_COGNITO_DOMAIN` / `NEXT_PUBLIC_COGNITO_CLIENT_ID` (see `.env.example`).
+
+When those vars are unset (local dev), the sign-in screen instead accepts a
+pasted Wisper **API key** (`wck_…`) as the bearer, authorized against the backend
+— see **Local development** above.
