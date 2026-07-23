@@ -28,12 +28,16 @@ import { WisperError } from "@/lib/wisper/client";
 import { formatBps, formatDateTime, formatMoney } from "@/lib/format";
 import type {
   AdminPolicy,
+  IsolationLevel,
   PolicyRules,
   PolicyVersion,
   WispNetwork,
 } from "@/lib/wisper/types";
 
 const NETWORKS: WispNetwork[] = ["none", "egress", "open"];
+
+/** Isolation floor options; `""` is the "No floor" sentinel (sends `null`). */
+const ISOLATION_LEVELS: IsolationLevel[] = ["shared", "sandboxed", "vm"];
 
 type Form = {
   platform_fee_bps: string;
@@ -43,6 +47,8 @@ type Form = {
   default_network: WispNetwork;
   max_active_leases_per_user: string;
   host_signups_enabled: boolean;
+  /** `""` = No floor (sent as `null`); otherwise an isolation level. */
+  min_isolation: "" | IsolationLevel;
 };
 
 /** Stringify a possibly-missing numeric field for a controlled text input. */
@@ -61,6 +67,7 @@ function toForm(p: Partial<PolicyRules>): Form {
     default_network: p.default_network ?? "none",
     max_active_leases_per_user: numStr(p.max_active_leases_per_user),
     host_signups_enabled: p.host_signups_enabled ?? false,
+    min_isolation: p.min_isolation ?? "",
   };
 }
 
@@ -99,6 +106,7 @@ function parseForm(f: Form): { rules: PolicyRules } | { error: string } {
       default_network: f.default_network,
       max_active_leases_per_user: nums.max_active_leases_per_user,
       host_signups_enabled: f.host_signups_enabled,
+      min_isolation: f.min_isolation === "" ? null : f.min_isolation,
     },
   };
 }
@@ -298,6 +306,26 @@ export default function PolicyEditor() {
                   {NETWORKS.map((n) => (
                     <MenuItem key={n} value={n}>
                       {n}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  select
+                  label="Minimum isolation floor"
+                  fullWidth
+                  value={form.min_isolation}
+                  onChange={(e) =>
+                    set("min_isolation", e.target.value as "" | IsolationLevel)
+                  }
+                  helperText="When a floor is set, a consumer requesting a weaker isolation level than the floor is rejected by the API."
+                  slotProps={{ htmlInput: { "aria-label": "Minimum isolation floor" } }}
+                >
+                  <MenuItem value="">No floor</MenuItem>
+                  {ISOLATION_LEVELS.map((level) => (
+                    <MenuItem key={level} value={level}>
+                      {level}
                     </MenuItem>
                   ))}
                 </TextField>

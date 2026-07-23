@@ -55,6 +55,10 @@ export type LeaseStatus =
 /** Container network mode (docs/API.md). */
 export type WispNetwork = "none" | "open" | "egress";
 
+/** Requestable wisp isolation levels, weakest → strongest. The platform policy
+ *  may set a `min_isolation` floor drawn from these values. */
+export type IsolationLevel = "shared" | "sandboxed" | "vm";
+
 // ---------------------------------------------------------------------------
 // Admin surface (/v1/admin/*). Contract embedded here; the authoritative docs
 // live in wisper-api (docs/API.md §admin). Amounts are integer minor units
@@ -112,6 +116,10 @@ export interface PolicyRules {
   max_active_leases_per_user: number;
   /** Whether new host registrations are accepted. */
   host_signups_enabled: boolean;
+  /** Minimum isolation floor for lease requests. `null` = no floor; a non-null
+   *  value must be one of the requestable levels (shared/sandboxed/vm). When a
+   *  floor is set, the API rejects consumers requesting a weaker level. */
+  min_isolation: IsolationLevel | null;
 }
 
 /** A single point-in-time revision of the policy (server-populated). All fields

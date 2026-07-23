@@ -86,6 +86,64 @@ describe("PolicyEditor", () => {
     expect(await screen.findByText("Policy saved.")).toBeInTheDocument();
   });
 
+  it("loads the current isolation floor and saves a changed floor", async () => {
+    getPolicy.mockResolvedValue({
+      active: { ...ACTIVE, min_isolation: "shared" },
+      versions: [{ ...ACTIVE, min_isolation: "shared" }, V2],
+    });
+    const savedActive: PolicyVersion = {
+      ...ACTIVE,
+      version: 4,
+      min_isolation: "vm",
+    };
+    updatePolicy.mockResolvedValue({
+      active: savedActive,
+      versions: [savedActive, ACTIVE, V2],
+    });
+    render(<PolicyEditor />);
+
+    // The floor loaded from the policy is reflected in the select.
+    const floor = await screen.findByLabelText("Minimum isolation floor");
+    expect(floor).toHaveTextContent("shared");
+    // The helper note explains the rejection behaviour.
+    expect(
+      screen.getByText(/requesting a weaker isolation level than the floor is rejected/i),
+    ).toBeInTheDocument();
+
+    // MUI's `TextField select` renders a listbox; pick "vm".
+    await userEvent.click(screen.getByLabelText("Minimum isolation floor"));
+    await userEvent.click(screen.getByRole("option", { name: "vm" }));
+
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(updatePolicy).toHaveBeenCalledTimes(1));
+    expect(updatePolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ min_isolation: "vm" }),
+    );
+  });
+
+  it("sends null when the isolation floor is 'No floor'", async () => {
+    getPolicy.mockResolvedValue({
+      active: { ...ACTIVE, min_isolation: "sandboxed" },
+      versions: [{ ...ACTIVE, min_isolation: "sandboxed" }, V2],
+    });
+    updatePolicy.mockResolvedValue(POLICY);
+    render(<PolicyEditor />);
+
+    const floor = await screen.findByLabelText("Minimum isolation floor");
+    expect(floor).toHaveTextContent("sandboxed");
+
+    await userEvent.click(screen.getByLabelText("Minimum isolation floor"));
+    await userEvent.click(screen.getByRole("option", { name: "No floor" }));
+
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(updatePolicy).toHaveBeenCalledTimes(1));
+    expect(updatePolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ min_isolation: null }),
+    );
+  });
+
   it("blocks saving when the minimum price exceeds the maximum", async () => {
     getPolicy.mockResolvedValue(POLICY);
     render(<PolicyEditor />);

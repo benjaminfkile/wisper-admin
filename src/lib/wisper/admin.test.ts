@@ -100,12 +100,14 @@ describe("admin client", () => {
       default_network: "egress" as const,
       max_active_leases_per_user: 4,
       host_signups_enabled: true,
+      min_isolation: "sandboxed" as const,
     };
     const calls = stubFetch({ body: policy });
     await admin.updatePolicy(policy);
     expect(calls[0].url).toBe("/wisper/v1/admin/policy");
     expect(calls[0].init.method).toBe("PUT");
     expect(JSON.parse(calls[0].init.body as string).platform_fee_bps).toBe(500);
+    expect(JSON.parse(calls[0].init.body as string).min_isolation).toBe("sandboxed");
     expect((calls[0].init.headers as Record<string, string>)["Content-Type"]).toBe(
       "application/json",
     );
