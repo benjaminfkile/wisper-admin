@@ -31,6 +31,8 @@ const HOSTS: AdminHost[] = [
     label: "acme-box",
     status: "active",
     online: true,
+    isolation_levels: ["shared", "sandboxed", "vm"],
+    default_isolation: "sandboxed",
     last_seen_at: "2026-07-19T00:00:00Z",
     created_at: "2026-01-01T00:00:00Z",
   },
@@ -79,6 +81,20 @@ describe("Moderation", () => {
     await userEvent.type(screen.getByLabelText("Search hosts"), "acme");
     expect(screen.getByText("Acme Compute")).toBeInTheDocument();
     expect(screen.queryByText("Bad Actor Co")).not.toBeInTheDocument();
+  });
+
+  it("shows each host's isolation levels as labeled chips and marks the default", async () => {
+    render(<Moderation />);
+
+    const acmeRow = (await screen.findByText("Acme Compute")).closest("tr")!;
+    // Every supported level is shown with its human label; the default is tagged.
+    expect(within(acmeRow).getByText("Shared kernel")).toBeInTheDocument();
+    expect(within(acmeRow).getByText("gVisor sandbox (default)")).toBeInTheDocument();
+    expect(within(acmeRow).getByText("VM isolation")).toBeInTheDocument();
+
+    // A host with no reported levels renders a dash rather than crashing.
+    const badRow = (await screen.findByText("Bad Actor Co")).closest("tr")!;
+    expect(within(badRow).queryByText(/kernel|sandbox|isolation/i)).toBeNull();
   });
 
   it("suspends a host with a reason", async () => {

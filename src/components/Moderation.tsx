@@ -30,9 +30,22 @@ import SearchIcon from "@mui/icons-material/Search";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
 import { formatDateTime } from "@/lib/format";
-import type { AdminHost, AdminUser } from "@/lib/wisper/types";
+import type { AdminHost, AdminUser, IsolationLevel } from "@/lib/wisper/types";
 
 type Kind = "hosts" | "users";
+
+/** Human labels for the requestable isolation levels (weakest → strongest). */
+const ISOLATION_LABELS: Record<IsolationLevel, string> = {
+  shared: "Shared kernel",
+  sandboxed: "gVisor sandbox",
+  vm: "VM isolation",
+};
+
+/** Human label for an isolation level, falling back to the raw key if the API
+ *  ever returns a level we don't recognise. */
+function isolationLabel(level: string): string {
+  return ISOLATION_LABELS[level as IsolationLevel] ?? level;
+}
 
 /** Case-insensitive substring match across the given (possibly missing) fields. */
 function matchesFields(fields: Array<string | undefined | null>, q: string): boolean {
@@ -93,6 +106,44 @@ function StatusChip({ status }: { status?: string }) {
       color={suspended ? "warning" : "success"}
       label={label}
     />
+  );
+}
+
+/** Read-only chips for a host's supported isolation levels, highlighting the
+ *  host's default. Renders a dash when the API reports no levels. */
+function IsolationChips({
+  levels,
+  defaultLevel,
+}: {
+  levels?: IsolationLevel[];
+  defaultLevel?: IsolationLevel;
+}) {
+  if (!levels || levels.length === 0) {
+    return <Typography color="text.secondary">—</Typography>;
+  }
+  return (
+    <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", gap: 0.5 }}>
+      {levels.map((level) => {
+        const isDefault = level === defaultLevel;
+        return (
+          <Tooltip
+            key={level}
+            title={isDefault ? "Default isolation level" : ""}
+          >
+            <Chip
+              size="small"
+              variant={isDefault ? "filled" : "outlined"}
+              color={isDefault ? "primary" : "default"}
+              label={
+                isDefault
+                  ? `${isolationLabel(level)} (default)`
+                  : isolationLabel(level)
+              }
+            />
+          </Tooltip>
+        );
+      })}
+    </Stack>
   );
 }
 
@@ -317,6 +368,7 @@ function HostsPanel() {
               <TableCell>Owner</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Online</TableCell>
+              <TableCell>Isolation</TableCell>
               <TableCell>Last seen</TableCell>
               <TableCell>Joined</TableCell>
               <TableCell align="right">Actions</TableCell>
@@ -345,6 +397,12 @@ function HostsPanel() {
                     variant="outlined"
                     color={h.online ? "success" : "default"}
                     label={h.online ? "Online" : "Offline"}
+                  />
+                </TableCell>
+                <TableCell>
+                  <IsolationChips
+                    levels={h.isolation_levels}
+                    defaultLevel={h.default_isolation}
                   />
                 </TableCell>
                 <TableCell sx={{ whiteSpace: "nowrap" }}>
