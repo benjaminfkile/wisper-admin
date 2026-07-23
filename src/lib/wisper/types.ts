@@ -158,6 +158,12 @@ export interface AdminHost {
   agent_version?: string;
   last_seen_at?: string;
   created_at?: string;
+  /** Isolation levels this host can provide, weakest → strongest (a subset of
+   *  the requestable {@link IsolationLevel}s). Wire key `isolation_levels`. */
+  isolation_levels?: IsolationLevel[];
+  /** The level applied when a lease doesn't request a stronger one. Wire key
+   *  `default_isolation`. */
+  default_isolation?: IsolationLevel;
   /** Present only on suspended hosts. */
   suspended_at?: string;
   suspended_reason?: string;
