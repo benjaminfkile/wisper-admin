@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AdminGate from "./AdminGate";
 import { AuthContext, type AuthContextValue } from "@/lib/auth/context";
-import type { AuthUser } from "@/lib/auth/jwt";
+import type { AuthStatus, AuthUser } from "@/lib/auth/jwt";
 
 function adminUser(overrides: Partial<AuthUser> = {}): AuthUser {
   return {
@@ -28,7 +28,7 @@ function renderGate(value: Partial<AuthContextValue>) {
     status: "loading",
     user: null,
     signIn: vi.fn(),
-    signInWithKey: vi.fn(async () => "authenticated"),
+    signInWithKey: vi.fn(async () => "authenticated" as AuthStatus),
     signOut: vi.fn(),
     ...value,
   };

@@ -22,7 +22,7 @@ function renderForm(signInWithKey: (key: string) => Promise<AuthStatus>) {
 
 describe("ApiKeySignIn", () => {
   it("takes the key as a password input and never renders it as text", async () => {
-    renderForm(vi.fn(async () => "authenticated"));
+    renderForm(vi.fn(async () => "authenticated" as AuthStatus));
     const field = screen.getByLabelText("Wisper API key");
     expect(field).toHaveAttribute("type", "password");
     await userEvent.type(field, "wck_live_secret");
@@ -40,7 +40,7 @@ describe("ApiKeySignIn", () => {
   });
 
   it("surfaces an inline error when the backend rejects the key", async () => {
-    renderForm(vi.fn(async () => "unauthenticated"));
+    renderForm(vi.fn(async () => "unauthenticated" as AuthStatus));
     await userEvent.type(screen.getByLabelText("Wisper API key"), "wck_live_bad");
     await userEvent.click(screen.getByRole("button", { name: /sign in with key/i }));
     await waitFor(() =>
