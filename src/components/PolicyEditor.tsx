@@ -25,30 +25,34 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import { formatBps, formatDateTime, formatMoney } from "@/lib/format";
+import { formatBps, formatDateTime, formatMoney, parseMoneyToMinor } from "@/lib/format";
 import type {
   AdminPolicy,
   IsolationLevel,
   PolicyRules,
   PolicyVersion,
-  WispNetwork,
 } from "@/lib/wisper/types";
-
-const NETWORKS: WispNetwork[] = ["none", "egress", "open"];
 
 /** Isolation floor options; `""` is the "No floor" sentinel (sends `null`). */
 const ISOLATION_LEVELS: IsolationLevel[] = ["shared", "sandboxed", "vm"];
 
 type Form = {
-  platform_fee_bps: string;
-  min_price_per_hour: string;
-  max_price_per_hour: string;
-  min_topup: string;
-  default_network: WispNetwork;
-  max_active_leases_per_user: string;
-  host_signups_enabled: boolean;
+  /** Required: platform take rate 0..10000 bps. */
+  fee_bps: string;
+  /** Optional cents fields — entered as dollars (e.g. "10.00" → 1000 cents). */
+  min_topup_cents: string;
+  first_topup_max_cents: string;
+  new_account_max_topup_cents_per_day: string;
+  max_spend_cents_per_day: string;
+  /** Optional int fields. */
+  max_concurrent_leases_per_user: string;
+  max_ttl_seconds_cap: string;
+  new_account_window_hours: string;
   /** `""` = No floor (sent as `null`); otherwise an isolation level. */
   min_isolation: "" | IsolationLevel;
+  host_signups_enabled: boolean;
+  /** ISO-8601 datetime; empty = immediate effect. */
+  effective_from: string;
 };
 
 /** Stringify a possibly-missing numeric field for a controlled text input. */
@@ -56,63 +60,112 @@ function numStr(v: number | undefined | null): string {
   return typeof v === "number" && Number.isFinite(v) ? String(v) : "";
 }
 
-/** Build the editable form from the active policy revision (fields are optional
- *  on the wire, so each is defaulted). */
+/** Convert a cents value to a dollar string for display (1000 → "10"). */
+function centsToDisplay(cents: number | undefined | null): string {
+  if (cents == null || !Number.isFinite(cents)) return "";
+  return String(cents / 100);
+}
+
+/** Build the editable form from an active policy revision. */
 function toForm(p: Partial<PolicyRules>): Form {
   return {
-    platform_fee_bps: numStr(p.platform_fee_bps),
-    min_price_per_hour: numStr(p.min_price_per_hour),
-    max_price_per_hour: numStr(p.max_price_per_hour),
-    min_topup: numStr(p.min_topup),
-    default_network: p.default_network ?? "none",
-    max_active_leases_per_user: numStr(p.max_active_leases_per_user),
-    host_signups_enabled: p.host_signups_enabled ?? false,
+    fee_bps: numStr(p.fee_bps),
+    min_topup_cents: centsToDisplay(p.min_topup_cents),
+    first_topup_max_cents: centsToDisplay(p.first_topup_max_cents),
+    new_account_max_topup_cents_per_day: centsToDisplay(p.new_account_max_topup_cents_per_day),
+    max_spend_cents_per_day: centsToDisplay(p.max_spend_cents_per_day),
+    max_concurrent_leases_per_user: numStr(p.max_concurrent_leases_per_user),
+    max_ttl_seconds_cap: numStr(p.max_ttl_seconds_cap),
+    new_account_window_hours: numStr(p.new_account_window_hours),
     min_isolation: p.min_isolation ?? "",
+    host_signups_enabled: p.host_signups_enabled ?? false,
+    effective_from: p.effective_from ?? "",
   };
 }
 
-/** Parse the form into a PolicyRules body, or return the first validation error. */
+/** Validate an optional non-negative integer field. Returns `{ value }` on
+ *  success (undefined when empty) or `{ error }` on invalid input. */
+function parseOptInt(
+  raw: string,
+  label: string,
+): { value: number | undefined } | { error: string } {
+  if (raw === "") return { value: undefined };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    return { error: `${label} must be a non-negative whole number.` };
+  }
+  return { value: n };
+}
+
+/** Validate an optional dollar-entry field and return cents, or an error. */
+function parseOptCents(
+  raw: string,
+  label: string,
+): { value: number | undefined } | { error: string } {
+  if (raw === "") return { value: undefined };
+  const cents = parseMoneyToMinor(raw);
+  if (cents === null) {
+    return { error: `${label} must be a valid dollar amount (e.g. "10.00").` };
+  }
+  return { value: cents };
+}
+
+/** Parse the form into a PolicyRules payload, or return the first validation error. */
 function parseForm(f: Form): { rules: PolicyRules } | { error: string } {
-  const nums: Record<string, number> = {};
-  const fields: [keyof Form, string][] = [
-    ["platform_fee_bps", "Platform fee"],
-    ["min_price_per_hour", "Minimum price"],
-    ["max_price_per_hour", "Maximum price"],
-    ["min_topup", "Minimum top-up"],
-    ["max_active_leases_per_user", "Max active leases"],
+  // fee_bps is required.
+  const feeBps = Number(f.fee_bps);
+  if (f.fee_bps === "" || !Number.isInteger(feeBps) || Number.isNaN(feeBps)) {
+    return { error: "Platform fee must be a whole number (basis points)." };
+  }
+  if (feeBps < 0 || feeBps > 10000) {
+    return { error: "Platform fee must be between 0 and 10000 bps (0–100%)." };
+  }
+
+  const rules: PolicyRules = { fee_bps: feeBps };
+
+  // Optional int fields.
+  const intFields: [keyof Form, string, keyof PolicyRules][] = [
+    ["max_concurrent_leases_per_user", "Max concurrent leases", "max_concurrent_leases_per_user"],
+    ["max_ttl_seconds_cap", "Max TTL cap", "max_ttl_seconds_cap"],
+    ["new_account_window_hours", "New account window hours", "new_account_window_hours"],
   ];
-  for (const [key, label] of fields) {
-    const n = Number(f[key]);
-    if (f[key as keyof Form] === "" || Number.isNaN(n)) {
-      return { error: `${label} must be a number.` };
+  for (const [field, label, key] of intFields) {
+    const res = parseOptInt(f[field] as string, label);
+    if ("error" in res) return res;
+    if (res.value !== undefined) (rules as unknown as Record<string, unknown>)[key] = res.value;
+  }
+
+  // Optional cents fields (user enters dollars, API expects cents).
+  const centsFields: [keyof Form, string, keyof PolicyRules][] = [
+    ["min_topup_cents", "Minimum top-up", "min_topup_cents"],
+    ["first_topup_max_cents", "First top-up max", "first_topup_max_cents"],
+    ["new_account_max_topup_cents_per_day", "New account max top-up/day", "new_account_max_topup_cents_per_day"],
+    ["max_spend_cents_per_day", "Max spend/day", "max_spend_cents_per_day"],
+  ];
+  for (const [field, label, key] of centsFields) {
+    const res = parseOptCents(f[field] as string, label);
+    if ("error" in res) return res;
+    if (res.value !== undefined) (rules as unknown as Record<string, unknown>)[key] = res.value;
+  }
+
+  // min_isolation: "" → null (no floor), otherwise the chosen level.
+  rules.min_isolation = f.min_isolation === "" ? null : f.min_isolation;
+
+  rules.host_signups_enabled = f.host_signups_enabled;
+
+  // effective_from: optional ISO-8601 datetime.
+  if (f.effective_from !== "") {
+    if (Number.isNaN(new Date(f.effective_from).getTime())) {
+      return { error: "Effective from must be a valid ISO-8601 date-time." };
     }
-    if (n < 0 || !Number.isInteger(n)) {
-      return { error: `${label} must be a non-negative whole number.` };
-    }
-    nums[key] = n;
+    rules.effective_from = f.effective_from;
   }
-  if (nums.platform_fee_bps > 10000) {
-    return { error: "Platform fee cannot exceed 10000 bps (100%)." };
-  }
-  if (nums.min_price_per_hour > nums.max_price_per_hour) {
-    return { error: "Minimum price cannot exceed the maximum price." };
-  }
-  return {
-    rules: {
-      platform_fee_bps: nums.platform_fee_bps,
-      min_price_per_hour: nums.min_price_per_hour,
-      max_price_per_hour: nums.max_price_per_hour,
-      min_topup: nums.min_topup,
-      default_network: f.default_network,
-      max_active_leases_per_user: nums.max_active_leases_per_user,
-      host_signups_enabled: f.host_signups_enabled,
-      min_isolation: f.min_isolation === "" ? null : f.min_isolation,
-    },
-  };
+
+  return { rules };
 }
 
-/** Editor for GET/PUT /v1/admin/policy: fee, price caps, min top-up, network,
- *  lease ceiling, and host-signup toggle — with the version history below. */
+/** Editor for GET/PUT /v1/admin/policy: fee, top-up limits, lease caps, new-account
+ *  throttles, isolation floor, and host-signup toggle — plus version history. */
 export default function PolicyEditor() {
   const [policy, setPolicy] = useState<AdminPolicy | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -204,31 +257,32 @@ export default function PolicyEditor() {
     );
   }
 
-  const feePreview = Number.isNaN(Number(form.platform_fee_bps))
+  const feePreview = Number.isNaN(Number(form.fee_bps))
     ? "—"
-    : formatBps(Number(form.platform_fee_bps));
+    : formatBps(Number(form.fee_bps));
 
   const active = policy.active ?? {};
 
   return (
     <Box>
       <Header
-        version={active.version}
-        updatedAt={active.updated_at}
-        updatedBy={active.updated_by}
+        id={active.id}
+        effectiveFrom={active.effective_from}
+        createdBy={active.created_by}
       />
 
       <Card variant="outlined" sx={{ mb: 4 }}>
         <CardContent>
           <Box component="form" noValidate onSubmit={(e) => e.preventDefault()}>
             <Grid container spacing={3}>
+              {/* ── Core ── */}
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
                   label="Platform fee"
                   type="number"
                   fullWidth
-                  value={form.platform_fee_bps}
-                  onChange={(e) => set("platform_fee_bps", e.target.value)}
+                  value={form.fee_bps}
+                  onChange={(e) => set("fee_bps", e.target.value)}
                   helperText={`Basis points — currently ${feePreview}`}
                   slotProps={{
                     input: {
@@ -245,71 +299,137 @@ export default function PolicyEditor() {
                   label="Minimum top-up"
                   type="number"
                   fullWidth
-                  value={form.min_topup}
-                  onChange={(e) => set("min_topup", e.target.value)}
-                  helperText={`Minor units — ${moneyHint(form.min_topup)}`}
-                  slotProps={{ htmlInput: { min: 0, "aria-label": "Minimum top-up" } }}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="Minimum price / hour"
-                  type="number"
-                  fullWidth
-                  value={form.min_price_per_hour}
-                  onChange={(e) => set("min_price_per_hour", e.target.value)}
-                  helperText={`Minor units — ${moneyHint(form.min_price_per_hour)}`}
+                  value={form.min_topup_cents}
+                  onChange={(e) => set("min_topup_cents", e.target.value)}
+                  helperText="Dollars — empty = no minimum"
                   slotProps={{
-                    htmlInput: { min: 0, "aria-label": "Minimum price per hour" },
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">$</InputAdornment>
+                      ),
+                    },
+                    htmlInput: { min: 0, step: "0.01", "aria-label": "Minimum top-up" },
                   }}
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
-                  label="Maximum price / hour"
+                  label="Max concurrent leases / user"
                   type="number"
                   fullWidth
-                  value={form.max_price_per_hour}
-                  onChange={(e) => set("max_price_per_hour", e.target.value)}
-                  helperText={`Minor units — ${moneyHint(form.max_price_per_hour)}`}
-                  slotProps={{
-                    htmlInput: { min: 0, "aria-label": "Maximum price per hour" },
-                  }}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="Max active leases / user"
-                  type="number"
-                  fullWidth
-                  value={form.max_active_leases_per_user}
-                  onChange={(e) => set("max_active_leases_per_user", e.target.value)}
+                  value={form.max_concurrent_leases_per_user}
+                  onChange={(e) => set("max_concurrent_leases_per_user", e.target.value)}
+                  helperText="Empty = no limit"
                   slotProps={{
                     htmlInput: {
                       min: 0,
-                      "aria-label": "Max active leases per user",
+                      "aria-label": "Max concurrent leases per user",
                     },
                   }}
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
-                  select
-                  label="Default network"
+                  label="Max TTL cap"
+                  type="number"
                   fullWidth
-                  value={form.default_network}
-                  onChange={(e) =>
-                    set("default_network", e.target.value as WispNetwork)
-                  }
-                  slotProps={{ htmlInput: { "aria-label": "Default network" } }}
-                >
-                  {NETWORKS.map((n) => (
-                    <MenuItem key={n} value={n}>
-                      {n}
-                    </MenuItem>
-                  ))}
-                </TextField>
+                  value={form.max_ttl_seconds_cap}
+                  onChange={(e) => set("max_ttl_seconds_cap", e.target.value)}
+                  helperText="Seconds — empty = no cap"
+                  slotProps={{
+                    input: {
+                      endAdornment: (
+                        <InputAdornment position="end">s</InputAdornment>
+                      ),
+                    },
+                    htmlInput: { min: 0, "aria-label": "Max TTL cap" },
+                  }}
+                />
               </Grid>
+
+              {/* ── New-account throttles ── */}
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="First top-up max"
+                  type="number"
+                  fullWidth
+                  value={form.first_topup_max_cents}
+                  onChange={(e) => set("first_topup_max_cents", e.target.value)}
+                  helperText="Dollars — max a new account may top up first time; empty = no limit"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">$</InputAdornment>
+                      ),
+                    },
+                    htmlInput: { min: 0, step: "0.01", "aria-label": "First top-up max" },
+                  }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="New account window"
+                  type="number"
+                  fullWidth
+                  value={form.new_account_window_hours}
+                  onChange={(e) => set("new_account_window_hours", e.target.value)}
+                  helperText="Hours — rolling window for new-account daily limit; empty = no window"
+                  slotProps={{
+                    input: {
+                      endAdornment: (
+                        <InputAdornment position="end">hr</InputAdornment>
+                      ),
+                    },
+                    htmlInput: { min: 0, "aria-label": "New account window hours" },
+                  }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="New account max top-up / day"
+                  type="number"
+                  fullWidth
+                  value={form.new_account_max_topup_cents_per_day}
+                  onChange={(e) => set("new_account_max_topup_cents_per_day", e.target.value)}
+                  helperText="Dollars — per-day top-up cap for new accounts; empty = no limit"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">$</InputAdornment>
+                      ),
+                    },
+                    htmlInput: {
+                      min: 0,
+                      step: "0.01",
+                      "aria-label": "New account max top-up per day",
+                    },
+                  }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Max spend / day"
+                  type="number"
+                  fullWidth
+                  value={form.max_spend_cents_per_day}
+                  onChange={(e) => set("max_spend_cents_per_day", e.target.value)}
+                  helperText="Dollars — platform-wide daily spend cap; empty = no cap"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">$</InputAdornment>
+                      ),
+                    },
+                    htmlInput: {
+                      min: 0,
+                      step: "0.01",
+                      "aria-label": "Max spend per day",
+                    },
+                  }}
+                />
+              </Grid>
+
+              {/* ── Access controls ── */}
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
                   select
@@ -329,6 +449,17 @@ export default function PolicyEditor() {
                     </MenuItem>
                   ))}
                 </TextField>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Effective from"
+                  type="datetime-local"
+                  fullWidth
+                  value={form.effective_from}
+                  onChange={(e) => set("effective_from", e.target.value)}
+                  helperText="ISO-8601 — leave empty to apply immediately"
+                  slotProps={{ htmlInput: { "aria-label": "Effective from" } }}
+                />
               </Grid>
               <Grid size={{ xs: 12 }}>
                 <FormControlLabel
@@ -385,19 +516,14 @@ export default function PolicyEditor() {
   );
 }
 
-function moneyHint(value: string): string {
-  const n = Number(value);
-  return value !== "" && !Number.isNaN(n) ? formatMoney(n) : "—";
-}
-
 function Header({
-  version,
-  updatedAt,
-  updatedBy,
+  id,
+  effectiveFrom,
+  createdBy,
 }: {
-  version?: number;
-  updatedAt?: string;
-  updatedBy?: string;
+  id?: string;
+  effectiveFrom?: string;
+  createdBy?: string;
 }) {
   return (
     <Box sx={{ mb: 3 }}>
@@ -405,15 +531,15 @@ function Header({
         <Typography variant="h4" component="h1">
           Policy &amp; Pricing
         </Typography>
-        {version != null && (
-          <Chip size="small" color="primary" label={`v${version}`} />
+        {id != null && (
+          <Chip size="small" color="primary" label={id} />
         )}
       </Box>
       <Typography color="text.secondary">
-        Platform fee, price caps, minimum top-up, and lease limits.
-        {updatedAt
-          ? ` Last updated ${formatDateTime(updatedAt)}${
-              updatedBy ? ` by ${updatedBy}` : ""
+        Platform fee, top-up limits, lease caps, and new-account throttles.
+        {effectiveFrom
+          ? ` Effective ${formatDateTime(effectiveFrom)}${
+              createdBy ? ` · created by ${createdBy}` : ""
             }.`
           : ""}
       </Typography>
@@ -435,30 +561,26 @@ function VersionHistory({ history }: { history?: PolicyVersion[] }) {
           <Table size="small" aria-label="Policy version history">
             <TableHead>
               <TableRow>
-                <TableCell>Version</TableCell>
+                <TableCell>ID</TableCell>
                 <TableCell align="right">Fee</TableCell>
-                <TableCell align="right">Price range / hr</TableCell>
                 <TableCell align="right">Min top-up</TableCell>
                 <TableCell align="right">Max leases</TableCell>
-                <TableCell>Network</TableCell>
+                <TableCell>Isolation floor</TableCell>
                 <TableCell>Signups</TableCell>
-                <TableCell>Updated</TableCell>
+                <TableCell>Effective</TableCell>
+                <TableCell>Created by</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {history.map((v, i) => (
-                <TableRow key={v.version ?? i}>
-                  <TableCell>{v.version != null ? `v${v.version}` : "—"}</TableCell>
-                  <TableCell align="right">{formatBps(v.platform_fee_bps)}</TableCell>
+                <TableRow key={v.id ?? i}>
+                  <TableCell>{v.id ?? "—"}</TableCell>
+                  <TableCell align="right">{formatBps(v.fee_bps)}</TableCell>
+                  <TableCell align="right">{formatMoney(v.min_topup_cents)}</TableCell>
                   <TableCell align="right">
-                    {formatMoney(v.min_price_per_hour)} –{" "}
-                    {formatMoney(v.max_price_per_hour)}
+                    {v.max_concurrent_leases_per_user ?? "—"}
                   </TableCell>
-                  <TableCell align="right">{formatMoney(v.min_topup)}</TableCell>
-                  <TableCell align="right">
-                    {v.max_active_leases_per_user ?? "—"}
-                  </TableCell>
-                  <TableCell>{v.default_network ?? "—"}</TableCell>
+                  <TableCell>{v.min_isolation ?? "—"}</TableCell>
                   <TableCell>
                     {v.host_signups_enabled == null
                       ? "—"
@@ -466,10 +588,8 @@ function VersionHistory({ history }: { history?: PolicyVersion[] }) {
                         ? "on"
                         : "off"}
                   </TableCell>
-                  <TableCell>
-                    {formatDateTime(v.updated_at)}
-                    {v.updated_by ? ` · ${v.updated_by}` : ""}
-                  </TableCell>
+                  <TableCell>{formatDateTime(v.effective_from)}</TableCell>
+                  <TableCell>{v.created_by ?? "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

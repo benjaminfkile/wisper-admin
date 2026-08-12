@@ -91,23 +91,32 @@ describe("admin client", () => {
     expect(users[0].email).toBe("dana@example.com");
   });
 
-  it("updatePolicy PUTs a JSON body", async () => {
+  it("updatePolicy PUTs a JSON body with the real API field names", async () => {
+    // Real PolicyUpdateRequest contract: fee_bps (not platform_fee_bps),
+    // min_topup_cents (not min_topup), max_concurrent_leases_per_user (not
+    // max_active_leases_per_user). Fields removed from API: min_price_per_hour,
+    // max_price_per_hour, default_network.
     const policy = {
-      platform_fee_bps: 500,
-      min_price_per_hour: 1,
-      max_price_per_hour: 100,
-      min_topup: 500,
-      default_network: "egress" as const,
-      max_active_leases_per_user: 4,
+      fee_bps: 500,
+      min_topup_cents: 1000,
+      max_concurrent_leases_per_user: 4,
+      max_ttl_seconds_cap: 3600,
       host_signups_enabled: true,
       min_isolation: "sandboxed" as const,
+      first_topup_max_cents: 5000,
+      new_account_window_hours: 24,
+      new_account_max_topup_cents_per_day: 10000,
+      max_spend_cents_per_day: 100000,
     };
-    const calls = stubFetch({ body: policy });
+    const calls = stubFetch({ body: { active: policy, versions: [policy] } });
     await admin.updatePolicy(policy);
     expect(calls[0].url).toBe("/wisper/v1/admin/policy");
     expect(calls[0].init.method).toBe("PUT");
-    expect(JSON.parse(calls[0].init.body as string).platform_fee_bps).toBe(500);
-    expect(JSON.parse(calls[0].init.body as string).min_isolation).toBe("sandboxed");
+    const sent = JSON.parse(calls[0].init.body as string);
+    expect(sent.fee_bps).toBe(500);
+    expect(sent.min_topup_cents).toBe(1000);
+    expect(sent.max_concurrent_leases_per_user).toBe(4);
+    expect(sent.min_isolation).toBe("sandboxed");
     expect((calls[0].init.headers as Record<string, string>)["Content-Type"]).toBe(
       "application/json",
     );
@@ -180,18 +189,22 @@ describe("admin client", () => {
     expect(res.next_cursor).toBe("cursor-2");
   });
 
-  it("getPolicy unwraps the {active, versions} envelope", async () => {
+  it("getPolicy unwraps the {active, versions} envelope with real PolicyView fields", async () => {
+    // Real PolicyView: fee_bps (not platform_fee_bps); server-assigned id and
+    // created_by (not version/updated_by); effective_from (not updated_at).
     stubFetch({
       body: {
-        active: { version: 3, platform_fee_bps: 500 },
+        active: { id: "pol-3", fee_bps: 500, created_by: "admin@wisper.dev" },
         versions: [
-          { version: 3, platform_fee_bps: 500 },
-          { version: 2, platform_fee_bps: 400 },
+          { id: "pol-3", fee_bps: 500, created_by: "admin@wisper.dev" },
+          { id: "pol-2", fee_bps: 400, created_by: "founder@wisper.dev" },
         ],
       },
     });
     const policy = await admin.getPolicy();
-    expect(policy.active?.version).toBe(3);
+    expect(policy.active?.id).toBe("pol-3");
+    expect(policy.active?.fee_bps).toBe(500);
+    expect(policy.active?.created_by).toBe("admin@wisper.dev");
     expect(policy.versions).toHaveLength(2);
   });
 
