@@ -99,37 +99,44 @@ export interface AdminOverview {
   health?: AdminHealth;
 }
 
-/** The editable policy & pricing fields (the PUT body). These field names are
- *  the app's best mapping of docs/API.md's policy body; every consumer reads
- *  them tolerantly so an unexpected field simply renders blank/dash. */
+/** The editable policy fields (PUT /v1/admin/policy body — PolicyUpdateRequest).
+ *  Only `fee_bps` is required; all others are optional (omit = unlimited/none).
+ *  Amounts in cents (`*_cents`) must be sent as integer minor units. */
 export interface PolicyRules {
-  /** Platform take rate applied to each lease, in basis points (10000 = 100%). */
-  platform_fee_bps: number;
-  /** Floor/ceiling price per compute-hour, in minor units. */
-  min_price_per_hour: number;
-  max_price_per_hour: number;
-  /** Minimum wallet top-up a consumer may make, in minor units. */
-  min_topup: number;
-  /** Default network mode applied to new wisps. */
-  default_network: WispNetwork;
-  /** Ceiling on concurrently active leases a single consumer may hold. */
-  max_active_leases_per_user: number;
+  /** Platform take rate in basis points (0..10000, where 10000 = 100%). Required. */
+  fee_bps: number;
+  /** Minimum wallet top-up a consumer may make, in cents. */
+  min_topup_cents?: number;
+  /** Max concurrent leases a single consumer may hold. */
+  max_concurrent_leases_per_user?: number;
+  /** Maximum lease duration cap in seconds. */
+  max_ttl_seconds_cap?: number;
+  /** Minimum isolation floor for lease requests. `null` = no floor. When set,
+   *  the API rejects consumers requesting a weaker isolation level. */
+  min_isolation?: IsolationLevel | null;
+  /** Maximum amount a new account may top up on their first top-up, in cents. */
+  first_topup_max_cents?: number;
+  /** Rolling window in hours for the new-account per-day top-up limit. */
+  new_account_window_hours?: number;
+  /** Max top-up per day for new accounts within the window, in cents. */
+  new_account_max_topup_cents_per_day?: number;
+  /** Platform-wide maximum spend per day, in cents. */
+  max_spend_cents_per_day?: number;
+  /** When this policy revision takes effect (ISO-8601). Omit for immediate. */
+  effective_from?: string;
   /** Whether new host registrations are accepted. */
-  host_signups_enabled: boolean;
-  /** Minimum isolation floor for lease requests. `null` = no floor; a non-null
-   *  value must be one of the requestable levels (shared/sandboxed/vm). When a
-   *  floor is set, the API rejects consumers requesting a weaker level. */
-  min_isolation: IsolationLevel | null;
+  host_signups_enabled?: boolean;
 }
 
-/** A single point-in-time revision of the policy (server-populated). All fields
- *  optional: the server owns them and versions may omit any. */
+/** A single point-in-time policy revision returned by the server (PolicyView).
+ *  Extends the PUT body with server-assigned metadata. All fields optional: a
+ *  version may omit any of them. */
 export interface PolicyVersion extends Partial<PolicyRules> {
-  /** Monotonic revision number; the current policy has the highest. */
-  version?: number;
-  /** When this revision was written (RFC3339) and by which admin. */
-  updated_at?: string;
-  updated_by?: string;
+  /** Server-assigned revision identifier. */
+  id?: string;
+  /** Who created this revision (admin identity). */
+  created_by?: string;
+  /** effective_from is inherited from Partial<PolicyRules>. */
 }
 
 /** GET /v1/admin/policy — the active policy plus its version history.
