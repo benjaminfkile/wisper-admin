@@ -130,7 +130,7 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
         <Grid size={{ xs: 12, sm: 6, md: 4 }}>
           <StatTile
             label="Balance"
-            value={formatMoney(account.balance)}
+            value={formatMoney(account.balance_cents)}
             hint={account.currency}
           />
         </Grid>
@@ -196,10 +196,10 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
                     {entry.reference || "—"}
                   </TableCell>
                   <TableCell align="right">
-                    <SignedAmount amount={entry.amount} />
+                    <SignedAmount amount={entry.amount_cents} />
                   </TableCell>
                   <TableCell align="right">
-                    {formatMoney(entry.balance_after)}
+                    {formatMoney(entry.running_balance)}
                   </TableCell>
                 </TableRow>
               ))}

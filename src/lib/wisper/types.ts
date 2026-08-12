@@ -210,31 +210,41 @@ export interface SuspendRequest {
   reason: string;
 }
 
-/** POST /v1/admin/refunds — refund a consumer against a lease/ledger entry. */
+/** POST /v1/admin/refunds — refund a consumer.
+ *  `payment_intent` is optional; when provided it ties the refund to the
+ *  specific Stripe PaymentIntent so the platform can reconcile it. The API
+ *  does NOT accept `lease_id` — drop that field entirely. */
 export interface RefundRequest {
   user_id: string;
-  lease_id?: string;
-  /** Amount to refund, in minor units (cents). API field is `amount_cents`. */
+  /** Optional Stripe PaymentIntent id to tie the refund to a specific charge. */
+  payment_intent?: string;
+  /** Amount to refund, in minor units (cents). */
   amount_cents: number;
   reason: string;
 }
 
-/** POST /v1/admin/adjustments — manual ledger credit/debit. */
+/** POST /v1/admin/adjustments — manual double-entry ledger transfer.
+ *  The API uses a two-legged model: money moves from `debit_account_id` to
+ *  `credit_account_id` by `amount_cents` (always positive). To credit a user
+ *  account the UI maps the user account → credit leg and the platform clearing
+ *  account → debit leg; debiting inverts the assignment. */
 export interface AdjustmentRequest {
-  account_id: string;
-  /** Signed amount in minor units: positive credits, negative debits. */
-  amount: number;
+  debit_account_id: string;
+  credit_account_id: string;
+  /** Positive minor-unit amount. */
+  amount_cents: number;
   reason: string;
 }
 
-/** A settled financial action (refund or adjustment) returned by its POST. */
+/** Response from POST /v1/admin/refunds or POST /v1/admin/adjustments.
+ *  Models the double-entry transaction the API commits. */
 export interface LedgerMutationResult {
-  id: string;
-  account_id: string;
-  amount: number;
-  reason?: string;
-  created_at?: string;
-  created_by?: string;
+  transaction_id: string;
+  amount_cents?: number;
+  debit_account_id?: string;
+  credit_account_id?: string;
+  debit_balance_cents?: number;
+  credit_balance_cents?: number;
 }
 
 /** A single audit-log entry (GET /v1/admin/audit). Field names are read
@@ -271,24 +281,25 @@ export interface AuditQuery {
 }
 
 /** A ledger account with its running balance and recent entries
- *  (GET /v1/admin/ledger/accounts/:id). */
+ *  (GET /v1/admin/ledger/accounts/:id → LedgerAccountView). */
 export interface LedgerAccount {
   id: string;
   /** Owning subject (host or user) and its kind. */
   owner_type?: "host" | "user" | "platform" | string;
   owner_id?: string;
-  /** Current balance, in minor units. */
-  balance?: number;
+  /** Current balance in minor units. API field is `balance_cents`. */
+  balance_cents?: number;
   currency?: string;
   entries: LedgerEntry[];
 }
 
+/** A single ledger entry (LedgerEntryView). */
 export interface LedgerEntry {
   id: string;
-  /** Signed amount in minor units. */
-  amount?: number;
-  /** Running balance after this entry, in minor units. */
-  balance_after?: number;
+  /** Signed amount in minor units. API field is `amount_cents`. */
+  amount_cents?: number;
+  /** Running account balance after this entry, in minor units. */
+  running_balance?: number;
   kind?: string;
   reference?: string;
   created_at?: string;

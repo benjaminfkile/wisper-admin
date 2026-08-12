@@ -56,15 +56,17 @@ export default function PayoutsPanel() {
 function ResultNote({ result }: { result: LedgerMutationResult }) {
   return (
     <Alert severity="success" sx={{ mt: 2 }}>
-      Posted <strong>{formatMoney(result.amount)}</strong> to account{" "}
-      <code>{result.account_id}</code> (entry <code>{result.id}</code>).
+      Transaction <code>{result.transaction_id}</code> posted:{" "}
+      <strong>{formatMoney(result.amount_cents)}</strong> (debit{" "}
+      <code>{result.debit_account_id}</code> / credit{" "}
+      <code>{result.credit_account_id}</code>).
     </Alert>
   );
 }
 
 function RefundForm() {
   const [userId, setUserId] = useState("");
-  const [leaseId, setLeaseId] = useState("");
+  const [paymentIntent, setPaymentIntent] = useState("");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +90,7 @@ function RefundForm() {
       const res = await admin.createRefund(
         {
           user_id: userId.trim(),
-          lease_id: leaseId.trim() || undefined,
+          payment_intent: paymentIntent.trim() || undefined,
           amount_cents: minor,
           reason: reason.trim(),
         },
@@ -97,7 +99,7 @@ function RefundForm() {
       setResult(res);
       keyRef.current = null;
       setUserId("");
-      setLeaseId("");
+      setPaymentIntent("");
       setAmount("");
       setReason("");
     } catch (err) {
@@ -132,11 +134,11 @@ function RefundForm() {
               slotProps={{ htmlInput: { "aria-label": "Refund consumer id" } }}
             />
             <TextField
-              label="Lease id (optional)"
-              value={leaseId}
-              onChange={(e) => setLeaseId(e.target.value)}
-              helperText="Ties the refund to a specific lease, if applicable."
-              slotProps={{ htmlInput: { "aria-label": "Refund lease id" } }}
+              label="Payment intent id (optional)"
+              value={paymentIntent}
+              onChange={(e) => setPaymentIntent(e.target.value)}
+              helperText="Ties the refund to a specific Stripe charge, if applicable."
+              slotProps={{ htmlInput: { "aria-label": "Refund payment intent id" } }}
             />
             <TextField
               label="Amount"
@@ -190,6 +192,11 @@ function RefundForm() {
 
 type Direction = "credit" | "debit";
 
+/** Well-known platform clearing account used as the offsetting leg for manual
+ *  adjustments. Crediting a user account debits this account and vice-versa,
+ *  keeping the ledger balanced without requiring admins to know internal IDs. */
+const PLATFORM_ACCOUNT = "platform";
+
 function AdjustmentForm() {
   const [accountId, setAccountId] = useState("");
   const [direction, setDirection] = useState<Direction>("credit");
@@ -201,9 +208,6 @@ function AdjustmentForm() {
   const keyRef = useRef<string | null>(null);
 
   const magnitude = useMemo(() => parseMoneyToMinor(amount), [amount]);
-  // The account leg is signed: credits add, debits subtract.
-  const signed =
-    magnitude != null ? (direction === "credit" ? magnitude : -magnitude) : null;
   const canSubmit =
     accountId.trim() !== "" &&
     reason.trim() !== "" &&
@@ -211,14 +215,26 @@ function AdjustmentForm() {
     magnitude > 0;
 
   const submit = async () => {
-    if (!canSubmit || signed == null) return;
+    if (!canSubmit || magnitude == null) return;
     if (keyRef.current == null) keyRef.current = newIdempotencyKey();
     setBusy(true);
     setError(null);
     setResult(null);
+    // Double-entry: crediting the target account debits the platform leg, and
+    // vice-versa. amount_cents is always positive; the API derives direction
+    // from which account is on which leg.
+    const debitAccountId =
+      direction === "credit" ? PLATFORM_ACCOUNT : accountId.trim();
+    const creditAccountId =
+      direction === "credit" ? accountId.trim() : PLATFORM_ACCOUNT;
     try {
       const res = await admin.createAdjustment(
-        { account_id: accountId.trim(), amount: signed, reason: reason.trim() },
+        {
+          debit_account_id: debitAccountId,
+          credit_account_id: creditAccountId,
+          amount_cents: magnitude,
+          reason: reason.trim(),
+        },
         keyRef.current,
       );
       setResult(res);
