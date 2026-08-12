@@ -130,10 +130,21 @@ describe("admin client", () => {
     expect(JSON.parse(calls[0].init.body as string).reason).toBe("abuse");
   });
 
-  it("createRefund POSTs the body with an Idempotency-Key header", async () => {
-    const calls = stubFetch({ body: { id: "r-1", account_id: "acct-1", amount: 500 } });
+  it("createRefund POSTs user_id + amount_cents (no lease_id) with an Idempotency-Key", async () => {
+    // Real AdminRefundRequest: user_id, amount_cents, reason, optional payment_intent.
+    // No lease_id — the API ignores it; payment_intent is the right optional anchor.
+    const calls = stubFetch({
+      body: {
+        transaction_id: "txn-r1",
+        amount_cents: 500,
+        debit_account_id: "platform",
+        credit_account_id: "acct-1",
+        debit_balance_cents: -500,
+        credit_balance_cents: 500,
+      },
+    });
     await admin.createRefund(
-      { user_id: "u-1", lease_id: "l-1", amount_cents: 500, reason: "outage" },
+      { user_id: "u-1", amount_cents: 500, reason: "outage" },
       "idem-key-123",
     );
     expect(calls[0].url).toBe("/wisper/v1/admin/refunds");
@@ -142,19 +153,66 @@ describe("admin client", () => {
     expect(headers["Idempotency-Key"]).toBe("idem-key-123");
     const body = JSON.parse(calls[0].init.body as string);
     expect(body).toMatchObject({ user_id: "u-1", amount_cents: 500, reason: "outage" });
+    expect(body).not.toHaveProperty("lease_id");
   });
 
-  it("createAdjustment POSTs a signed amount with an Idempotency-Key", async () => {
-    const calls = stubFetch({ body: { id: "a-1", account_id: "acct-9", amount: -250 } });
-    await admin.createAdjustment(
-      { account_id: "acct-9", amount: -250, reason: "correction" },
+  it("createRefund sends payment_intent when provided", async () => {
+    const calls = stubFetch({
+      body: {
+        transaction_id: "txn-r2",
+        amount_cents: 1000,
+        debit_account_id: "platform",
+        credit_account_id: "acct-2",
+      },
+    });
+    await admin.createRefund(
+      { user_id: "u-2", payment_intent: "pi_abc123", amount_cents: 1000, reason: "dupe" },
+      "idem-key-456",
+    );
+    const body = JSON.parse(calls[0].init.body as string);
+    expect(body.payment_intent).toBe("pi_abc123");
+  });
+
+  it("createAdjustment POSTs double-entry shape (debit/credit accounts, positive amount_cents)", async () => {
+    // Real AdjustmentRequest: debit_account_id, credit_account_id, amount_cents (positive).
+    // No signed `amount`, no bare `account_id`.
+    const calls = stubFetch({
+      body: {
+        transaction_id: "txn-a1",
+        amount_cents: 250,
+        debit_account_id: "acct-9",
+        credit_account_id: "platform",
+        debit_balance_cents: -250,
+        credit_balance_cents: 250,
+      },
+    });
+    const result = await admin.createAdjustment(
+      {
+        debit_account_id: "acct-9",
+        credit_account_id: "platform",
+        amount_cents: 250,
+        reason: "correction",
+      },
       "idem-key-999",
     );
     expect(calls[0].url).toBe("/wisper/v1/admin/adjustments");
     expect((calls[0].init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
       "idem-key-999",
     );
-    expect(JSON.parse(calls[0].init.body as string).amount).toBe(-250);
+    const body = JSON.parse(calls[0].init.body as string);
+    expect(body).toMatchObject({
+      debit_account_id: "acct-9",
+      credit_account_id: "platform",
+      amount_cents: 250,
+      reason: "correction",
+    });
+    expect(body).not.toHaveProperty("amount");
+    expect(body).not.toHaveProperty("account_id");
+    // Response carries the real AdjustmentResponse fields.
+    expect(result.transaction_id).toBe("txn-a1");
+    expect(result.amount_cents).toBe(250);
+    expect(result.debit_account_id).toBe("acct-9");
+    expect(result.credit_account_id).toBe("platform");
   });
 
   it("getAudit encodes query params and unwraps {data, next_cursor}", async () => {
@@ -208,10 +266,32 @@ describe("admin client", () => {
     expect(policy.versions).toHaveLength(2);
   });
 
-  it("getLedgerAccount targets the account path", async () => {
-    const calls = stubFetch({ body: { id: "acct-1", entries: [] } });
-    await admin.getLedgerAccount("acct-1");
+  it("getLedgerAccount targets the account path and returns balance_cents + entry amount_cents", async () => {
+    // Real LedgerAccountView: balance_cents (not balance).
+    // Real LedgerEntryView: amount_cents (not amount), running_balance (not balance_after).
+    const calls = stubFetch({
+      body: {
+        id: "acct-1",
+        owner_type: "user",
+        owner_id: "u-1",
+        balance_cents: 50000,
+        currency: "USD",
+        entries: [
+          {
+            id: "le-1",
+            amount_cents: 50000,
+            running_balance: 50000,
+            kind: "topup",
+            created_at: "2026-07-20T00:00:00Z",
+          },
+        ],
+      },
+    });
+    const account = await admin.getLedgerAccount("acct-1");
     expect(calls[0].url).toBe("/wisper/v1/admin/ledger/accounts/acct-1");
+    expect(account.balance_cents).toBe(50000);
+    expect(account.entries[0].amount_cents).toBe(50000);
+    expect(account.entries[0].running_balance).toBe(50000);
   });
 
   it("surfaces the uniform error envelope as WisperError", async () => {

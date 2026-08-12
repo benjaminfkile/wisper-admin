@@ -14,12 +14,12 @@ const createRefund = vi.mocked(admin.createRefund);
 const createAdjustment = vi.mocked(admin.createAdjustment);
 
 const RESULT: LedgerMutationResult = {
-  id: "entry-1",
-  account_id: "acct-1",
-  amount: 1250,
-  reason: "outage",
-  created_at: "2026-07-12T00:00:00Z",
-  created_by: "admin@wisper.dev",
+  transaction_id: "txn-1",
+  amount_cents: 1250,
+  debit_account_id: "platform",
+  credit_account_id: "acct-1",
+  debit_balance_cents: -1250,
+  credit_balance_cents: 1250,
 };
 
 describe("PayoutsPanel", () => {
@@ -40,10 +40,13 @@ describe("PayoutsPanel", () => {
 
     await waitFor(() => expect(createRefund).toHaveBeenCalledTimes(1));
     const [body, key] = createRefund.mock.calls[0];
+    // Real AdminRefundRequest: user_id + amount_cents + reason; no lease_id.
     expect(body).toMatchObject({ user_id: "u-1", amount_cents: 1250, reason: "service outage" });
+    expect(body).not.toHaveProperty("lease_id");
     expect(typeof key).toBe("string");
     expect((key as string).length).toBeGreaterThan(0);
-    expect(await screen.findByText(/Posted/)).toBeInTheDocument();
+    // ResultNote reads transaction_id and amount_cents from AdjustmentResponse.
+    expect(await screen.findByText(/txn-1/)).toBeInTheDocument();
   });
 
   it("reuses the same idempotency key when a refund retries after failure", async () => {
@@ -65,8 +68,12 @@ describe("PayoutsPanel", () => {
     expect(secondKey).toBe(firstKey);
   });
 
-  it("posts a signed debit adjustment and previews the balanced entry", async () => {
-    createAdjustment.mockResolvedValue({ ...RESULT, amount: -300 });
+  it("posts a double-entry debit adjustment and previews the balanced entry", async () => {
+    createAdjustment.mockResolvedValue({
+      ...RESULT,
+      debit_account_id: "acct-9",
+      credit_account_id: "platform",
+    });
     render(<PayoutsPanel />);
 
     await userEvent.type(screen.getByLabelText("Adjustment account id"), "acct-9");
@@ -83,8 +90,39 @@ describe("PayoutsPanel", () => {
 
     await waitFor(() => expect(createAdjustment).toHaveBeenCalledTimes(1));
     const [body, key] = createAdjustment.mock.calls[0];
-    expect(body).toMatchObject({ account_id: "acct-9", amount: -300, reason: "correction" });
+    // Real AdjustmentRequest: double-entry with debit/credit accounts + positive amount_cents.
+    // Debiting acct-9 means: debit_account_id=acct-9, credit_account_id=platform.
+    expect(body).toMatchObject({
+      debit_account_id: "acct-9",
+      credit_account_id: "platform",
+      amount_cents: 300,
+      reason: "correction",
+    });
+    expect(body).not.toHaveProperty("amount");
+    expect(body).not.toHaveProperty("account_id");
     expect(typeof key).toBe("string");
+  });
+
+  it("posts a double-entry credit adjustment with platform as the debit leg", async () => {
+    createAdjustment.mockResolvedValue(RESULT);
+    render(<PayoutsPanel />);
+
+    await userEvent.type(screen.getByLabelText("Adjustment account id"), "acct-9");
+    await userEvent.type(screen.getByLabelText("Adjustment amount"), "5");
+    await userEvent.type(screen.getByLabelText("Adjustment reason"), "goodwill credit");
+    // Default direction is credit — no toggle needed.
+
+    await userEvent.click(screen.getByRole("button", { name: /post adjustment/i }));
+
+    await waitFor(() => expect(createAdjustment).toHaveBeenCalledTimes(1));
+    const [body] = createAdjustment.mock.calls[0];
+    // Crediting acct-9 means: debit_account_id=platform, credit_account_id=acct-9.
+    expect(body).toMatchObject({
+      debit_account_id: "platform",
+      credit_account_id: "acct-9",
+      amount_cents: 500,
+      reason: "goodwill credit",
+    });
   });
 
   it("keeps the submit button disabled until required fields are valid", async () => {
