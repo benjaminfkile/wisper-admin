@@ -133,7 +133,7 @@ describe("admin client", () => {
   it("createRefund POSTs the body with an Idempotency-Key header", async () => {
     const calls = stubFetch({ body: { id: "r-1", account_id: "acct-1", amount: 500 } });
     await admin.createRefund(
-      { user_id: "u-1", lease_id: "l-1", amount: 500, reason: "outage" },
+      { user_id: "u-1", lease_id: "l-1", amount_cents: 500, reason: "outage" },
       "idem-key-123",
     );
     expect(calls[0].url).toBe("/wisper/v1/admin/refunds");
@@ -141,7 +141,7 @@ describe("admin client", () => {
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers["Idempotency-Key"]).toBe("idem-key-123");
     const body = JSON.parse(calls[0].init.body as string);
-    expect(body).toMatchObject({ user_id: "u-1", amount: 500, reason: "outage" });
+    expect(body).toMatchObject({ user_id: "u-1", amount_cents: 500, reason: "outage" });
   });
 
   it("createAdjustment POSTs a signed amount with an Idempotency-Key", async () => {

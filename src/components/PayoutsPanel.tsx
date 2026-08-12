@@ -89,7 +89,7 @@ function RefundForm() {
         {
           user_id: userId.trim(),
           lease_id: leaseId.trim() || undefined,
-          amount: minor,
+          amount_cents: minor,
           reason: reason.trim(),
         },
         keyRef.current,

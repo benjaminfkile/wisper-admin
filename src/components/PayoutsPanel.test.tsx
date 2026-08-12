@@ -40,7 +40,7 @@ describe("PayoutsPanel", () => {
 
     await waitFor(() => expect(createRefund).toHaveBeenCalledTimes(1));
     const [body, key] = createRefund.mock.calls[0];
-    expect(body).toMatchObject({ user_id: "u-1", amount: 1250, reason: "service outage" });
+    expect(body).toMatchObject({ user_id: "u-1", amount_cents: 1250, reason: "service outage" });
     expect(typeof key).toBe("string");
     expect((key as string).length).toBeGreaterThan(0);
     expect(await screen.findByText(/Posted/)).toBeInTheDocument();

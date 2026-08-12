@@ -214,8 +214,8 @@ export interface SuspendRequest {
 export interface RefundRequest {
   user_id: string;
   lease_id?: string;
-  /** Amount to refund, in minor units. */
-  amount: number;
+  /** Amount to refund, in minor units (cents). API field is `amount_cents`. */
+  amount_cents: number;
   reason: string;
 }
 
