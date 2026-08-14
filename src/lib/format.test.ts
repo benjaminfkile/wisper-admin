@@ -15,6 +15,20 @@ describe("format helpers", () => {
     expect(formatMoney(-500)).toBe("-$5.00");
   });
 
+  it("inserts thousands separators for amounts >= $1,000", () => {
+    // Boundary: values under $1,000 render unchanged (two-decimal cents form).
+    expect(formatMoney(99999)).toBe("$999.99");
+    // Exactly $1,000 gets a separator.
+    expect(formatMoney(100000)).toBe("$1,000.00");
+    // Task example: $1,234.56 must render with a comma.
+    expect(formatMoney(123456)).toBe("$1,234.56");
+    // Large value with two separators.
+    expect(formatMoney(100000000)).toBe("$1,000,000.00");
+    // Negative large values keep the app's leading-minus convention.
+    expect(formatMoney(-123456)).toBe("-$1,234.56");
+    expect(formatMoney(-100000000)).toBe("-$1,000,000.00");
+  });
+
   it("formats basis points as a percentage", () => {
     expect(formatBps(0)).toBe("0%");
     expect(formatBps(500)).toBe("5%");
