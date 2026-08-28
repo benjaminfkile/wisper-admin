@@ -101,7 +101,6 @@ describe("admin client", () => {
       min_topup_cents: 1000,
       max_concurrent_leases_per_user: 4,
       max_ttl_seconds_cap: 3600,
-      host_signups_enabled: true,
       min_isolation: "sandboxed" as const,
       first_topup_max_cents: 5000,
       new_account_window_hours: 24,

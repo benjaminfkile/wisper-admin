@@ -9,12 +9,10 @@ import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import Grid from "@mui/material/Grid";
 import InputAdornment from "@mui/material/InputAdornment";
 import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
-import Switch from "@mui/material/Switch";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
@@ -50,7 +48,6 @@ type Form = {
   new_account_window_hours: string;
   /** `""` = No floor (sent as `null`); otherwise an isolation level. */
   min_isolation: "" | IsolationLevel;
-  host_signups_enabled: boolean;
   /** ISO-8601 datetime; empty = immediate effect. */
   effective_from: string;
 };
@@ -78,7 +75,6 @@ function toForm(p: Partial<PolicyRules>): Form {
     max_ttl_seconds_cap: numStr(p.max_ttl_seconds_cap),
     new_account_window_hours: numStr(p.new_account_window_hours),
     min_isolation: p.min_isolation ?? "",
-    host_signups_enabled: p.host_signups_enabled ?? false,
     effective_from: p.effective_from ?? "",
   };
 }
@@ -151,8 +147,6 @@ function parseForm(f: Form): { rules: PolicyRules } | { error: string } {
   // min_isolation: "" → null (no floor), otherwise the chosen level.
   rules.min_isolation = f.min_isolation === "" ? null : f.min_isolation;
 
-  rules.host_signups_enabled = f.host_signups_enabled;
-
   // effective_from: optional ISO-8601 datetime.
   if (f.effective_from !== "") {
     if (Number.isNaN(new Date(f.effective_from).getTime())) {
@@ -165,7 +159,7 @@ function parseForm(f: Form): { rules: PolicyRules } | { error: string } {
 }
 
 /** Editor for GET/PUT /v1/admin/policy: fee, top-up limits, lease caps, new-account
- *  throttles, isolation floor, and host-signup toggle — plus version history. */
+ *  throttles, and isolation floor, plus version history. */
 export default function PolicyEditor() {
   const [policy, setPolicy] = useState<AdminPolicy | null>(null);
   const [form, setForm] = useState<Form | null>(null);
@@ -461,17 +455,6 @@ export default function PolicyEditor() {
                   slotProps={{ htmlInput: { "aria-label": "Effective from" } }}
                 />
               </Grid>
-              <Grid size={{ xs: 12 }}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={form.host_signups_enabled}
-                      onChange={(e) => set("host_signups_enabled", e.target.checked)}
-                    />
-                  }
-                  label="Host signups enabled"
-                />
-              </Grid>
             </Grid>
 
             {saveError && (
@@ -566,7 +549,6 @@ function VersionHistory({ history }: { history?: PolicyVersion[] }) {
                 <TableCell align="right">Min top-up</TableCell>
                 <TableCell align="right">Max leases</TableCell>
                 <TableCell>Isolation floor</TableCell>
-                <TableCell>Signups</TableCell>
                 <TableCell>Effective</TableCell>
                 <TableCell>Created by</TableCell>
               </TableRow>
@@ -581,13 +563,6 @@ function VersionHistory({ history }: { history?: PolicyVersion[] }) {
                     {v.max_concurrent_leases_per_user ?? "—"}
                   </TableCell>
                   <TableCell>{v.min_isolation ?? "—"}</TableCell>
-                  <TableCell>
-                    {v.host_signups_enabled == null
-                      ? "—"
-                      : v.host_signups_enabled
-                        ? "on"
-                        : "off"}
-                  </TableCell>
                   <TableCell>{formatDateTime(v.effective_from)}</TableCell>
                   <TableCell>{v.created_by ?? "—"}</TableCell>
                 </TableRow>
