@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
+import AlertTitle from "@mui/material/AlertTitle";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
@@ -14,8 +15,6 @@ import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
 import TableRow from "@mui/material/TableRow";
-import ToggleButton from "@mui/material/ToggleButton";
-import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { admin } from "@/lib/wisper/admin";
@@ -190,26 +189,29 @@ function RefundForm() {
   );
 }
 
-type Direction = "credit" | "debit";
-
-/** Well-known platform clearing account used as the offsetting leg for manual
- *  adjustments. Crediting a user account debits this account and vice-versa,
- *  keeping the ledger balanced without requiring admins to know internal IDs. */
-const PLATFORM_ACCOUNT = "platform";
-
+/** Manual double-entry adjustment: the operator picks the two ledger accounts
+ *  (money moves from `debit_account_id` to `credit_account_id`). Both must be
+ *  real ledger-account UUIDs; the API rejects anything else. Look up an id via
+ *  the Ledger forensics page when it isn't already at hand. */
 function AdjustmentForm() {
-  const [accountId, setAccountId] = useState("");
-  const [direction, setDirection] = useState<Direction>("credit");
+  const [debitAccountId, setDebitAccountId] = useState("");
+  const [creditAccountId, setCreditAccountId] = useState("");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<unknown>(null);
   const [result, setResult] = useState<LedgerMutationResult | null>(null);
   const [busy, setBusy] = useState(false);
   const keyRef = useRef<string | null>(null);
 
+  const debit = debitAccountId.trim();
+  const credit = creditAccountId.trim();
   const magnitude = useMemo(() => parseMoneyToMinor(amount), [amount]);
+  const sameAccount = debit !== "" && debit === credit;
   const canSubmit =
-    accountId.trim() !== "" &&
+    debit !== "" &&
+    credit !== "" &&
+    !sameAccount &&
     reason.trim() !== "" &&
     magnitude != null &&
     magnitude > 0;
@@ -219,19 +221,13 @@ function AdjustmentForm() {
     if (keyRef.current == null) keyRef.current = newIdempotencyKey();
     setBusy(true);
     setError(null);
+    setErrorDetails(null);
     setResult(null);
-    // Double-entry: crediting the target account debits the platform leg, and
-    // vice-versa. amount_cents is always positive; the API derives direction
-    // from which account is on which leg.
-    const debitAccountId =
-      direction === "credit" ? PLATFORM_ACCOUNT : accountId.trim();
-    const creditAccountId =
-      direction === "credit" ? accountId.trim() : PLATFORM_ACCOUNT;
     try {
       const res = await admin.createAdjustment(
         {
-          debit_account_id: debitAccountId,
-          credit_account_id: creditAccountId,
+          debit_account_id: debit,
+          credit_account_id: credit,
           amount_cents: magnitude,
           reason: reason.trim(),
         },
@@ -239,11 +235,18 @@ function AdjustmentForm() {
       );
       setResult(res);
       keyRef.current = null;
-      setAccountId("");
+      setDebitAccountId("");
+      setCreditAccountId("");
       setAmount("");
       setReason("");
     } catch (err) {
-      setError(err instanceof WisperError ? err.message : "The adjustment failed.");
+      if (err instanceof WisperError) {
+        setError(err.message);
+        setErrorDetails(err.details);
+      } else {
+        setError("The adjustment failed.");
+        setErrorDetails(null);
+      }
     } finally {
       setBusy(false);
     }
@@ -266,27 +269,31 @@ function AdjustmentForm() {
         >
           <Stack spacing={2}>
             <TextField
-              label="Ledger account id"
+              label="Debit account id"
               required
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              slotProps={{ htmlInput: { "aria-label": "Adjustment account id" } }}
+              value={debitAccountId}
+              onChange={(e) => setDebitAccountId(e.target.value)}
+              error={sameAccount}
+              helperText="Money moves out of this account. Ledger-account UUID."
+              slotProps={{
+                htmlInput: { "aria-label": "Adjustment debit account id" },
+              }}
             />
-            <ToggleButtonGroup
-              exclusive
-              color="primary"
-              value={direction}
-              onChange={(_, v: Direction | null) => v && setDirection(v)}
-              aria-label="Adjustment direction"
-              size="small"
-            >
-              <ToggleButton value="credit" aria-label="Credit">
-                Credit (+)
-              </ToggleButton>
-              <ToggleButton value="debit" aria-label="Debit">
-                Debit (−)
-              </ToggleButton>
-            </ToggleButtonGroup>
+            <TextField
+              label="Credit account id"
+              required
+              value={creditAccountId}
+              onChange={(e) => setCreditAccountId(e.target.value)}
+              error={sameAccount}
+              helperText={
+                sameAccount
+                  ? "Debit and credit accounts must be different."
+                  : "Money moves into this account. Ledger-account UUID."
+              }
+              slotProps={{
+                htmlInput: { "aria-label": "Adjustment credit account id" },
+              }}
+            />
             <TextField
               label="Amount"
               required
@@ -323,12 +330,12 @@ function AdjustmentForm() {
             />
 
             <BalancedPreview
-              accountId={accountId.trim()}
+              debitAccountId={debit}
+              creditAccountId={credit}
               magnitude={magnitude}
-              direction={direction}
             />
 
-            {error && <Alert severity="error">{error}</Alert>}
+            {error && <ValidationErrorAlert message={error} details={errorDetails} />}
             {result && <ResultNote result={result} />}
 
             <Button
@@ -346,20 +353,72 @@ function AdjustmentForm() {
   );
 }
 
-/** Show both legs of the double-entry so the admin sees it balances to zero:
- *  the target account and the offsetting platform clearing account. */
-function BalancedPreview({
-  accountId,
-  magnitude,
-  direction,
+/** Render a WisperError as an Alert, expanding the `details` payload when the
+ *  API returned validation feedback so the operator can see which fields the
+ *  server flagged. Falls back to just the message when there are no details. */
+function ValidationErrorAlert({
+  message,
+  details,
 }: {
-  accountId: string;
+  message: string;
+  details: unknown;
+}) {
+  const items = detailLines(details);
+  if (items.length === 0) {
+    return <Alert severity="error">{message}</Alert>;
+  }
+  return (
+    <Alert severity="error">
+      <AlertTitle>{message}</AlertTitle>
+      <Box component="ul" sx={{ pl: 3, m: 0 }}>
+        {items.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </Box>
+    </Alert>
+  );
+}
+
+/** Flatten the API's `error.details` into human-readable lines. Tolerant of the
+ *  shapes wisper-api uses: an array of strings, an array of `{ field, message }`
+ *  records, or a `{ field: message }` map. Anything else collapses to zero lines
+ *  so the bare error message still renders. */
+function detailLines(details: unknown): string[] {
+  if (details == null) return [];
+  if (Array.isArray(details)) {
+    return details
+      .map((d) => {
+        if (typeof d === "string") return d;
+        if (d && typeof d === "object") {
+          const rec = d as Record<string, unknown>;
+          const field = typeof rec.field === "string" ? rec.field : undefined;
+          const message = typeof rec.message === "string" ? rec.message : undefined;
+          if (field && message) return `${field}: ${message}`;
+          return message ?? field;
+        }
+        return undefined;
+      })
+      .filter((s): s is string => typeof s === "string" && s.length > 0);
+  }
+  if (typeof details === "object") {
+    return Object.entries(details as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+      .filter((s) => s.length > 0);
+  }
+  return [];
+}
+
+/** Show both legs of the double-entry so the admin sees it balances to zero. */
+function BalancedPreview({
+  debitAccountId,
+  creditAccountId,
+  magnitude,
+}: {
+  debitAccountId: string;
+  creditAccountId: string;
   magnitude: number | null;
-  direction: Direction;
 }) {
   if (magnitude == null || magnitude <= 0) return null;
-  const account = direction === "credit" ? magnitude : -magnitude;
-  const platform = -account;
   const money = (n: number) => `${n >= 0 ? "+" : "−"}${formatMoney(Math.abs(n))}`;
 
   return (
@@ -370,17 +429,19 @@ function BalancedPreview({
       <Table size="small" aria-label="Balanced entry preview">
         <TableBody>
           <TableRow>
-            <TableCell sx={{ border: 0, py: 0.5 }}>
-              {accountId || "target account"}
+            <TableCell sx={{ border: 0, py: 0.5, wordBreak: "break-all" }}>
+              {creditAccountId || "credit account"}
             </TableCell>
             <TableCell align="right" sx={{ border: 0, py: 0.5 }}>
-              {money(account)}
+              {money(magnitude)}
             </TableCell>
           </TableRow>
           <TableRow>
-            <TableCell sx={{ border: 0, py: 0.5 }}>platform clearing</TableCell>
+            <TableCell sx={{ border: 0, py: 0.5, wordBreak: "break-all" }}>
+              {debitAccountId || "debit account"}
+            </TableCell>
             <TableCell align="right" sx={{ border: 0, py: 0.5 }}>
-              {money(platform)}
+              {money(-magnitude)}
             </TableCell>
           </TableRow>
           <TableRow>

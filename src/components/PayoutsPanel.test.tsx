@@ -13,11 +13,16 @@ vi.mock("@/lib/wisper/admin", () => ({
 const createRefund = vi.mocked(admin.createRefund);
 const createAdjustment = vi.mocked(admin.createAdjustment);
 
+// Two real ledger-account UUIDs used by the adjustment tests. The API requires
+// both legs to be existing, distinct account ids.
+const DEBIT_ACCT = "11111111-1111-1111-1111-111111111111";
+const CREDIT_ACCT = "22222222-2222-2222-2222-222222222222";
+
 const RESULT: LedgerMutationResult = {
   transaction_id: "txn-1",
   amount_cents: 1250,
-  debit_account_id: "platform",
-  credit_account_id: "acct-1",
+  debit_account_id: DEBIT_ACCT,
+  credit_account_id: CREDIT_ACCT,
   debit_balance_cents: -1250,
   credit_balance_cents: 1250,
 };
@@ -68,20 +73,26 @@ describe("PayoutsPanel", () => {
     expect(secondKey).toBe(firstKey);
   });
 
-  it("posts a double-entry debit adjustment and previews the balanced entry", async () => {
+  it("posts a double-entry adjustment with the two operator-supplied account ids", async () => {
     createAdjustment.mockResolvedValue({
       ...RESULT,
-      debit_account_id: "acct-9",
-      credit_account_id: "platform",
+      amount_cents: 300,
     });
     render(<PayoutsPanel />);
 
-    await userEvent.type(screen.getByLabelText("Adjustment account id"), "acct-9");
+    await userEvent.type(
+      screen.getByLabelText("Adjustment debit account id"),
+      DEBIT_ACCT,
+    );
+    await userEvent.type(
+      screen.getByLabelText("Adjustment credit account id"),
+      CREDIT_ACCT,
+    );
     await userEvent.type(screen.getByLabelText("Adjustment amount"), "3");
     await userEvent.type(screen.getByLabelText("Adjustment reason"), "correction");
 
-    // Switch to a debit; the balanced preview should show the account leg negative.
-    await userEvent.click(screen.getByRole("button", { name: /debit/i }));
+    // Balanced preview mirrors what will be posted: the credit leg gains the
+    // amount and the debit leg loses it, netting to zero.
     const preview = screen.getByRole("table", { name: /balanced entry preview/i });
     expect(within(preview).getByText("−$3.00")).toBeInTheDocument();
     expect(within(preview).getByText("+$3.00")).toBeInTheDocument();
@@ -90,42 +101,122 @@ describe("PayoutsPanel", () => {
 
     await waitFor(() => expect(createAdjustment).toHaveBeenCalledTimes(1));
     const [body, key] = createAdjustment.mock.calls[0];
-    // Real AdjustmentRequest: double-entry with debit/credit accounts + positive amount_cents.
-    // Debiting acct-9 means: debit_account_id=acct-9, credit_account_id=platform.
+    // Real AdjustmentRequest: two real ledger-account UUIDs + positive amount_cents.
+    // The literal string "platform" is no longer sent for either leg.
     expect(body).toMatchObject({
-      debit_account_id: "acct-9",
-      credit_account_id: "platform",
+      debit_account_id: DEBIT_ACCT,
+      credit_account_id: CREDIT_ACCT,
       amount_cents: 300,
       reason: "correction",
     });
+    expect(body.debit_account_id).not.toBe("platform");
+    expect(body.credit_account_id).not.toBe("platform");
     expect(body).not.toHaveProperty("amount");
     expect(body).not.toHaveProperty("account_id");
     expect(typeof key).toBe("string");
   });
 
-  it("posts a double-entry credit adjustment with platform as the debit leg", async () => {
-    createAdjustment.mockResolvedValue(RESULT);
+  it("blocks submission and flags the field when both accounts are the same", async () => {
     render(<PayoutsPanel />);
 
-    await userEvent.type(screen.getByLabelText("Adjustment account id"), "acct-9");
-    await userEvent.type(screen.getByLabelText("Adjustment amount"), "5");
-    await userEvent.type(screen.getByLabelText("Adjustment reason"), "goodwill credit");
-    // Default direction is credit — no toggle needed.
+    await userEvent.type(
+      screen.getByLabelText("Adjustment debit account id"),
+      DEBIT_ACCT,
+    );
+    await userEvent.type(
+      screen.getByLabelText("Adjustment credit account id"),
+      DEBIT_ACCT,
+    );
+    await userEvent.type(screen.getByLabelText("Adjustment amount"), "1");
+    await userEvent.type(screen.getByLabelText("Adjustment reason"), "typo");
 
-    await userEvent.click(screen.getByRole("button", { name: /post adjustment/i }));
-
-    await waitFor(() => expect(createAdjustment).toHaveBeenCalledTimes(1));
-    const [body] = createAdjustment.mock.calls[0];
-    // Crediting acct-9 means: debit_account_id=platform, credit_account_id=acct-9.
-    expect(body).toMatchObject({
-      debit_account_id: "platform",
-      credit_account_id: "acct-9",
-      amount_cents: 500,
-      reason: "goodwill credit",
-    });
+    expect(
+      screen.getByText(/debit and credit accounts must be different/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /post adjustment/i })).toBeDisabled();
+    expect(createAdjustment).not.toHaveBeenCalled();
   });
 
-  it("keeps the submit button disabled until required fields are valid", async () => {
+  it("keeps the adjustment submit disabled until both accounts, amount, and reason are set", async () => {
+    render(<PayoutsPanel />);
+    const submit = screen.getByRole("button", { name: /post adjustment/i });
+    expect(submit).toBeDisabled();
+
+    await userEvent.type(
+      screen.getByLabelText("Adjustment debit account id"),
+      DEBIT_ACCT,
+    );
+    await userEvent.type(screen.getByLabelText("Adjustment amount"), "1");
+    await userEvent.type(screen.getByLabelText("Adjustment reason"), "note");
+    // Still disabled without a credit account.
+    expect(submit).toBeDisabled();
+
+    await userEvent.type(
+      screen.getByLabelText("Adjustment credit account id"),
+      CREDIT_ACCT,
+    );
+    expect(submit).toBeEnabled();
+  });
+
+  it("surfaces the API's validation_error message and field details", async () => {
+    createAdjustment.mockRejectedValueOnce(
+      new WisperError(422, "validation_error", "Request failed validation.", [
+        { field: "debit_account_id", message: "account not found" },
+        { field: "amount_cents", message: "must be positive" },
+      ]),
+    );
+    render(<PayoutsPanel />);
+
+    await userEvent.type(
+      screen.getByLabelText("Adjustment debit account id"),
+      DEBIT_ACCT,
+    );
+    await userEvent.type(
+      screen.getByLabelText("Adjustment credit account id"),
+      CREDIT_ACCT,
+    );
+    await userEvent.type(screen.getByLabelText("Adjustment amount"), "2");
+    await userEvent.type(screen.getByLabelText("Adjustment reason"), "oops");
+    await userEvent.click(screen.getByRole("button", { name: /post adjustment/i }));
+
+    expect(
+      await screen.findByText("Request failed validation."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/debit_account_id: account not found/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/amount_cents: must be positive/),
+    ).toBeInTheDocument();
+  });
+
+  it("reuses the adjustment idempotency key when a retry follows a failure", async () => {
+    createAdjustment.mockRejectedValueOnce(new WisperError(500, "internal", "boom"));
+    createAdjustment.mockResolvedValueOnce(RESULT);
+    render(<PayoutsPanel />);
+
+    await userEvent.type(
+      screen.getByLabelText("Adjustment debit account id"),
+      DEBIT_ACCT,
+    );
+    await userEvent.type(
+      screen.getByLabelText("Adjustment credit account id"),
+      CREDIT_ACCT,
+    );
+    await userEvent.type(screen.getByLabelText("Adjustment amount"), "5");
+    await userEvent.type(screen.getByLabelText("Adjustment reason"), "retry");
+    await userEvent.click(screen.getByRole("button", { name: /post adjustment/i }));
+
+    expect(await screen.findByText("boom")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /post adjustment/i }));
+
+    await waitFor(() => expect(createAdjustment).toHaveBeenCalledTimes(2));
+    const firstKey = createAdjustment.mock.calls[0][1];
+    const secondKey = createAdjustment.mock.calls[1][1];
+    expect(secondKey).toBe(firstKey);
+  });
+
+  it("keeps the refund submit button disabled until required fields are valid", async () => {
     render(<PayoutsPanel />);
     const submit = screen.getByRole("button", { name: /issue refund/i });
     expect(submit).toBeDisabled();
