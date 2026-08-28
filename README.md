@@ -20,7 +20,7 @@ Every page is wrapped in `AdminGate` + `AdminShell` (brand, section nav, an API 
 - **Moderation** (`/moderation`): Hosts and Consumers tabs backed by `GET /v1/admin/hosts` and `GET /v1/admin/users`, with a client-side search box, status / online / isolation / Stripe-linkage chips, and Suspend (a required reason, `POST /v1/admin/{hosts|users}/:id/suspend`) / Unsuspend (`.../unsuspend`) actions.
 - **Payouts** (`/payouts`): two money-moving forms, each guarded by an `Idempotency-Key` that is minted per submission and reused across retries of that submission so a re-click cannot double-post:
   - **Refund a consumer**: `POST /v1/admin/refunds` with `user_id`, `amount_cents`, optional `payment_intent`, and a reason.
-  - **Ledger adjustment**: `POST /v1/admin/adjustments`, a balanced double-entry transfer (`debit_account_id` / `credit_account_id` / `amount_cents` / `reason`). The form takes one account id plus a credit/debit direction and uses a platform clearing account as the offsetting leg, previewing both legs and the zero net before posting.
+  - **Ledger adjustment**: `POST /v1/admin/adjustments`, a balanced double-entry transfer (`debit_account_id` / `credit_account_id` / `amount_cents` / `reason`). The form takes two real ledger-account UUIDs (the API rejects anything else), validates that they are distinct, previews both legs and the zero net before posting, and surfaces the server's `validation_error` details when the request is rejected.
 - **Ledger** (`/ledger`): `GET /v1/admin/ledger/accounts/:id` read-only forensics for any ledger account id: balance, owner, and its entries.
 - **Audit** (`/audit`): `GET /v1/admin/audit` newest first, filterable by actor, action, and target id, paged with the opaque `next_cursor` ("Load more", 50 per page).
 
@@ -114,7 +114,6 @@ see **Local development** above.
 
 The admin client unwraps envelopes tolerantly, but several shapes it sends or reads differ from what the current wisper-api defines (see its `docs/API.md` and `Admin/AdminModels.cs`). Until the client is updated:
 
-- Ledger adjustment: the API requires both `debit_account_id` and `credit_account_id` to be ledger-account UUIDs; the form's platform clearing leg is sent as the literal string `platform`, which the API rejects. Post adjustments with two real account ids until this is fixed.
 - Policy: `host_signups_enabled` is not part of the API's policy contract; the switch is sent but ignored and never comes back.
 - Audit: the API parses `actor` and `target_id` as UUIDs (a non-UUID filter is a `validation_error`) and returns each row's details as `meta`, which the log's Details column does not read yet.
 - Ledger forensics: the API returns `{ account: {...}, entries: [...] }` with `kind` / `owner_user_id` / `balance_cents` on `account` and `debit_cents` / `credit_cents` / `transaction_id` / `lease_id` per entry; the view reads a flat account and `amount_cents` / `running_balance` per entry.
