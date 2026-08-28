@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -27,8 +27,19 @@ type Filters = { actor: string; action: string; target_id: string };
 const EMPTY: Filters = { actor: "", action: "", target_id: "" };
 const PAGE = 50;
 
-/** Filterable audit log (GET /v1/admin/audit). Filter by actor, action, or
- *  target, and page through results with the opaque cursor. */
+/** GUID/UUID (any RFC 4122 variant). The API rejects non-GUID `actor` and
+ *  `target_id` filters with a validation_error, so we gate submission until
+ *  those inputs are empty or a valid GUID. */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidUuidFilter(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === "" || UUID_RE.test(trimmed);
+}
+
+/** Filterable audit log (GET /v1/admin/audit). Filter by actor GUID, action,
+ *  or target GUID; page through results with the opaque cursor. */
 export default function AuditLog() {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [applied, setApplied] = useState<Filters>(EMPTY);
@@ -37,6 +48,13 @@ export default function AuditLog() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const actorValid = useMemo(() => isValidUuidFilter(filters.actor), [filters.actor]);
+  const targetValid = useMemo(
+    () => isValidUuidFilter(filters.target_id),
+    [filters.target_id],
+  );
+  const filtersValid = actorValid && targetValid;
 
   /** Load the first page for the given filters, replacing the current list. */
   const loadFirst = useCallback(async (f: Filters) => {
@@ -68,6 +86,7 @@ export default function AuditLog() {
   }, [loadFirst]);
 
   const apply = () => {
+    if (!filtersValid) return;
     setApplied(filters);
     void loadFirst(filters);
   };
@@ -127,14 +146,16 @@ export default function AuditLog() {
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={2}
-          sx={{ alignItems: { sm: "center" } }}
+          sx={{ alignItems: { sm: "flex-start" } }}
         >
           <TextField
             size="small"
-            label="Actor"
+            label="Actor GUID"
             value={filters.actor}
             onChange={(e) => set("actor", e.target.value)}
-            slotProps={{ htmlInput: { "aria-label": "Filter by actor" } }}
+            error={!actorValid}
+            helperText={!actorValid ? "Enter a valid GUID." : " "}
+            slotProps={{ htmlInput: { "aria-label": "Filter by actor GUID" } }}
           />
           <TextField
             size="small"
@@ -142,17 +163,25 @@ export default function AuditLog() {
             placeholder="e.g. host.suspend"
             value={filters.action}
             onChange={(e) => set("action", e.target.value)}
+            helperText=" "
             slotProps={{ htmlInput: { "aria-label": "Filter by action" } }}
           />
           <TextField
             size="small"
-            label="Target id"
+            label="Target GUID"
             value={filters.target_id}
             onChange={(e) => set("target_id", e.target.value)}
-            slotProps={{ htmlInput: { "aria-label": "Filter by target id" } }}
+            error={!targetValid}
+            helperText={!targetValid ? "Enter a valid GUID." : " "}
+            slotProps={{ htmlInput: { "aria-label": "Filter by target GUID" } }}
           />
           <Box sx={{ flexGrow: 1 }} />
-          <Button type="submit" variant="contained" color="primary" disabled={loading}>
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            disabled={loading || !filtersValid}
+          >
             Apply
           </Button>
           <Button onClick={reset} startIcon={<RefreshIcon />} disabled={loading}>

@@ -53,11 +53,13 @@ function str(v: unknown): string | undefined {
 
 /** Map a raw audit row to AuditEntry, tolerating the several plausible field
  *  names the API might use (actor vs actor_id vs actor_email; target vs
- *  target_type/target_id; metadata vs context vs details). */
+ *  target_type/target_id). The API's authoritative details field is `meta`;
+ *  metadata/context/details are also read as fallbacks so the log survives
+ *  future renames. */
 function normalizeAudit(raw: unknown): AuditEntry {
   const r = (raw ?? {}) as Record<string, unknown>;
   const target = (r.target ?? {}) as Record<string, unknown>;
-  const meta = r.metadata ?? r.context ?? r.details;
+  const meta = r.meta ?? r.metadata ?? r.context ?? r.details;
   return {
     id: str(r.id) ?? str(r.event_id) ?? "",
     actor:
@@ -191,14 +193,20 @@ export const admin = {
   },
 
   /** GET /v1/admin/ledger/accounts/:id — a ledger account with recent entries.
-   *  `entries` is coerced to an array so the view never crashes on omission. */
+   *  Wire envelope is `{ account, entries }`; we flatten so callers see a
+   *  single object (account fields plus `entries`). `entries` degrades to `[]`
+   *  when omitted so the view never crashes on a missing list. */
   getLedgerAccount(id: string): Promise<LedgerAccount> {
-    return request<LedgerAccount>(
+    return request<{ account?: LedgerAccount; entries?: LedgerAccount["entries"] }>(
       `${V1}/ledger/accounts/${encodeURIComponent(id)}`,
-    ).then((r) => ({
-      ...(r as LedgerAccount),
-      entries: Array.isArray(r?.entries) ? r.entries : [],
-    }));
+    ).then((r) => {
+      const account = (r?.account ?? {}) as LedgerAccount;
+      return {
+        ...account,
+        id: account.id ?? id,
+        entries: Array.isArray(r?.entries) ? r.entries : [],
+      };
+    });
   },
 };
 

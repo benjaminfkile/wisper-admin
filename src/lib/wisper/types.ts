@@ -246,8 +246,9 @@ export interface LedgerMutationResult {
 }
 
 /** A single audit-log entry (GET /v1/admin/audit). Field names are read
- *  tolerantly in the client (actor/actor_id/actor_email, target/target_*,
- *  metadata/context) so the log renders whatever the API supplies. */
+ *  tolerantly in the client (actor/actor_id/actor_email, target/target_*).
+ *  The API returns the structured payload as `meta`; older/other names
+ *  (metadata/context/details) are also accepted for resilience. */
 export interface AuditEntry {
   id: string;
   /** Actor who performed the action (admin identity). */
@@ -278,27 +279,34 @@ export interface AuditQuery {
   limit?: number;
 }
 
-/** A ledger account with its running balance and recent entries
- *  (GET /v1/admin/ledger/accounts/:id → LedgerAccountView). */
+/** A ledger account and its recent entries
+ *  (GET /v1/admin/ledger/accounts/:id → { account, entries }). The wire
+ *  envelope is unwrapped in admin.getLedgerAccount so callers see a single
+ *  flat object: the account's fields plus `entries`. */
 export interface LedgerAccount {
   id: string;
-  /** Owning subject (host or user) and its kind. */
-  owner_type?: "host" | "user" | "platform" | string;
-  owner_id?: string;
-  /** Current balance in minor units. API field is `balance_cents`. */
+  /** Ledger account kind, e.g. "user_wallet", "platform_revenue",
+   *  "host_earnings". */
+  kind?: string;
+  /** Owning user id (absent on platform accounts). */
+  owner_user_id?: string;
+  /** Current balance in minor units. */
   balance_cents?: number;
   currency?: string;
   entries: LedgerEntry[];
 }
 
-/** A single ledger entry (LedgerEntryView). */
+/** A single ledger entry (LedgerEntryView). Double-entry: exactly one of
+ *  debit_cents / credit_cents is typically non-zero on a given account's
+ *  entry. Amounts are positive minor units. */
 export interface LedgerEntry {
-  id: string;
-  /** Signed amount in minor units. API field is `amount_cents`. */
-  amount_cents?: number;
-  /** Running account balance after this entry, in minor units. */
-  running_balance?: number;
-  kind?: string;
-  reference?: string;
+  /** Debit posted to this account, in minor units (0 if this entry is a credit). */
+  debit_cents?: number;
+  /** Credit posted to this account, in minor units (0 if this entry is a debit). */
+  credit_cents?: number;
+  /** The double-entry transaction this leg belongs to. */
+  transaction_id?: string;
+  /** The lease that triggered this entry, when applicable. */
+  lease_id?: string;
   created_at?: string;
 }

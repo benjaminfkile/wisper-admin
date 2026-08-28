@@ -12,22 +12,25 @@ vi.mock("@/lib/wisper/admin", () => ({
 
 const getAudit = vi.mocked(admin.getAudit);
 
+const ACTOR_GUID = "11111111-1111-4111-8111-111111111111";
+const TARGET_GUID = "22222222-2222-4222-8222-222222222222";
+
 const ENTRIES: AuditEntry[] = [
   {
     id: "e-1",
-    actor: "admin@wisper.dev",
+    actor: ACTOR_GUID,
     action: "host.suspend",
     target_type: "host",
-    target_id: "h-2",
+    target_id: TARGET_GUID,
     metadata: { reason: "fraud" },
     created_at: "2026-07-12T00:00:00Z",
   },
   {
     id: "e-2",
-    actor: "founder@wisper.dev",
+    actor: ACTOR_GUID,
     action: "policy.update",
     target_type: "policy",
-    target_id: "v4",
+    target_id: TARGET_GUID,
     created_at: "2026-07-11T00:00:00Z",
   },
 ];
@@ -47,23 +50,51 @@ describe("AuditLog", () => {
     expect(getAudit).toHaveBeenCalledWith(expect.objectContaining({ limit: 50 }));
   });
 
-  it("applies filters and requeries", async () => {
+  it("applies filters and requeries with valid GUIDs", async () => {
     render(<AuditLog />);
     await screen.findByText("host.suspend");
 
-    await userEvent.type(screen.getByLabelText("Filter by actor"), "admin@wisper.dev");
+    await userEvent.type(screen.getByLabelText("Filter by actor GUID"), ACTOR_GUID);
     await userEvent.type(screen.getByLabelText("Filter by action"), "host.suspend");
     await userEvent.click(screen.getByRole("button", { name: /apply/i }));
 
     await waitFor(() =>
       expect(getAudit).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          actor: "admin@wisper.dev",
+          actor: ACTOR_GUID,
           action: "host.suspend",
           limit: 50,
         }),
       ),
     );
+  });
+
+  it("blocks Apply and shows a validation error when the actor filter is not a GUID", async () => {
+    render(<AuditLog />);
+    await screen.findByText("host.suspend");
+
+    getAudit.mockClear();
+    await userEvent.type(
+      screen.getByLabelText("Filter by actor GUID"),
+      "admin@wisper.dev",
+    );
+
+    expect(screen.getByRole("button", { name: /apply/i })).toBeDisabled();
+    expect(screen.getByText("Enter a valid GUID.")).toBeInTheDocument();
+    // Disabled Apply cannot dispatch a query.
+    expect(getAudit).not.toHaveBeenCalled();
+  });
+
+  it("blocks Apply when the target id filter is not a GUID", async () => {
+    render(<AuditLog />);
+    await screen.findByText("host.suspend");
+
+    await userEvent.type(
+      screen.getByLabelText("Filter by target GUID"),
+      "h-2",
+    );
+
+    expect(screen.getByRole("button", { name: /apply/i })).toBeDisabled();
   });
 
   it("pages through results with the cursor", async () => {
