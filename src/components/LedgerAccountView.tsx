@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -23,19 +23,17 @@ import StatTile from "@/components/StatTile";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
 import { formatDateTime, formatMoney } from "@/lib/format";
-import type { LedgerAccount } from "@/lib/wisper/types";
+import type { LedgerAccount, LedgerEntry } from "@/lib/wisper/types";
 
-/** Signed amount with a color: green for credits, red for debits. Renders a
- *  dash for a missing amount rather than a misleading zero. */
-function SignedAmount({ amount }: { amount?: number }) {
-  if (amount == null || !Number.isFinite(amount)) {
-    return <Box component="span">—</Box>;
+/** Cents amount rendered in the given color; empty when zero/missing so the
+ *  double-entry columns read as one number per row. */
+function CentsCell({ cents, color }: { cents?: number; color: string }) {
+  if (!cents || !Number.isFinite(cents)) {
+    return <Box component="span">{"—"}</Box>;
   }
-  const positive = amount >= 0;
   return (
-    <Box component="span" sx={{ color: positive ? "success.main" : "error.main" }}>
-      {positive ? "+" : "−"}
-      {formatMoney(Math.abs(amount))}
+    <Box component="span" sx={{ color }}>
+      {formatMoney(cents)}
     </Box>
   );
 }
@@ -123,7 +121,40 @@ export default function LedgerAccountView() {
   );
 }
 
+/** Sort entries newest-first, then compute the running account balance after
+ *  each entry. We anchor at the current balance (newest row) and walk older,
+ *  subtracting each row's net effect (credit − debit). Rows with an
+ *  unparseable timestamp fall to the bottom in encounter order. */
+function withRunningBalance(
+  entries: LedgerEntry[],
+  currentBalance?: number,
+): Array<LedgerEntry & { balance_after?: number }> {
+  const sorted = [...entries].sort((a, b) => {
+    const ta = a.created_at ? Date.parse(a.created_at) : NaN;
+    const tb = b.created_at ? Date.parse(b.created_at) : NaN;
+    if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+    if (Number.isNaN(ta)) return 1;
+    if (Number.isNaN(tb)) return -1;
+    return tb - ta;
+  });
+  if (currentBalance == null || !Number.isFinite(currentBalance)) {
+    return sorted.map((e) => ({ ...e }));
+  }
+  let running = currentBalance;
+  return sorted.map((e) => {
+    const after = running;
+    const delta = (e.credit_cents ?? 0) - (e.debit_cents ?? 0);
+    running = running - delta;
+    return { ...e, balance_after: after };
+  });
+}
+
 function AccountDetail({ account }: { account: LedgerAccount }) {
+  const rows = useMemo(
+    () => withRunningBalance(account.entries, account.balance_cents),
+    [account.entries, account.balance_cents],
+  );
+
   return (
     <Box>
       <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -139,12 +170,12 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
             label="Owner"
             value={
               <Typography variant="h6" component="p" sx={{ fontWeight: 700 }}>
-                {account.owner_id || "—"}
+                {account.owner_user_id || "—"}
               </Typography>
             }
             hint={
-              account.owner_type ? (
-                <Chip size="small" variant="outlined" label={account.owner_type} />
+              account.kind ? (
+                <Chip size="small" variant="outlined" label={account.kind} />
               ) : undefined
             }
           />
@@ -163,7 +194,7 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
       </Typography>
       <Divider sx={{ mb: 2 }} />
 
-      {account.entries.length === 0 ? (
+      {rows.length === 0 ? (
         <Card variant="outlined">
           <CardContent>
             <Typography color="text.secondary">
@@ -177,29 +208,36 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
             <TableHead>
               <TableRow>
                 <TableCell>When</TableCell>
-                <TableCell>Kind</TableCell>
                 <TableCell>Reference</TableCell>
-                <TableCell align="right">Amount</TableCell>
+                <TableCell align="right">Debit</TableCell>
+                <TableCell align="right">Credit</TableCell>
                 <TableCell align="right">Balance after</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {account.entries.map((entry) => (
-                <TableRow key={entry.id}>
+              {rows.map((entry, i) => (
+                <TableRow key={`${entry.transaction_id ?? "txn"}-${i}`}>
                   <TableCell sx={{ whiteSpace: "nowrap" }}>
                     {formatDateTime(entry.created_at)}
                   </TableCell>
-                  <TableCell>
-                    <Chip size="small" variant="outlined" label={entry.kind} />
-                  </TableCell>
                   <TableCell sx={{ wordBreak: "break-all" }}>
-                    {entry.reference || "—"}
+                    <Typography variant="body2">
+                      {entry.transaction_id || "—"}
+                    </Typography>
+                    {entry.lease_id && (
+                      <Typography variant="caption" color="text.secondary">
+                        lease {entry.lease_id}
+                      </Typography>
+                    )}
                   </TableCell>
                   <TableCell align="right">
-                    <SignedAmount amount={entry.amount_cents} />
+                    <CentsCell cents={entry.debit_cents} color="error.main" />
                   </TableCell>
                   <TableCell align="right">
-                    {formatMoney(entry.running_balance)}
+                    <CentsCell cents={entry.credit_cents} color="success.main" />
+                  </TableCell>
+                  <TableCell align="right">
+                    {formatMoney(entry.balance_after)}
                   </TableCell>
                 </TableRow>
               ))}

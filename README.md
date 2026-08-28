@@ -21,8 +21,8 @@ Every page is wrapped in `AdminGate` + `AdminShell` (brand, section nav, an API 
 - **Payouts** (`/payouts`): two money-moving forms, each guarded by an `Idempotency-Key` that is minted per submission and reused across retries of that submission so a re-click cannot double-post:
   - **Refund a consumer**: `POST /v1/admin/refunds` with `user_id`, `amount_cents`, optional `payment_intent`, and a reason.
   - **Ledger adjustment**: `POST /v1/admin/adjustments`, a balanced double-entry transfer (`debit_account_id` / `credit_account_id` / `amount_cents` / `reason`). The form takes two real ledger-account UUIDs (the API rejects anything else), validates that they are distinct, previews both legs and the zero net before posting, and surfaces the server's `validation_error` details when the request is rejected.
-- **Ledger** (`/ledger`): `GET /v1/admin/ledger/accounts/:id` read-only forensics for any ledger account id: balance, owner, and its entries.
-- **Audit** (`/audit`): `GET /v1/admin/audit` newest first, filterable by actor, action, and target id, paged with the opaque `next_cursor` ("Load more", 50 per page).
+- **Ledger** (`/ledger`): `GET /v1/admin/ledger/accounts/:id` read-only forensics for any ledger account id. The wire envelope `{ account, entries }` is flattened at the client boundary; the view shows balance, kind, owner user id, and each entry's debit/credit legs, transaction id, lease id, and a client-computed running balance (anchored at the current balance, walking older by `credit − debit`).
+- **Audit** (`/audit`): `GET /v1/admin/audit` newest first, filterable by actor GUID, action, and target GUID, paged with the opaque `next_cursor` ("Load more", 50 per page). The `actor` and `target_id` filters are validated as GUIDs before Apply is enabled, because the API rejects non-GUID values as `validation_error`. Each row's structured payload is read from `meta`.
 
 ## Configure
 
@@ -114,7 +114,5 @@ see **Local development** above.
 
 The admin client unwraps envelopes tolerantly, but several shapes it sends or reads differ from what the current wisper-api defines (see its `docs/API.md` and `Admin/AdminModels.cs`). Until the client is updated:
 
-- Audit: the API parses `actor` and `target_id` as UUIDs (a non-UUID filter is a `validation_error`) and returns each row's details as `meta`, which the log's Details column does not read yet.
-- Ledger forensics: the API returns `{ account: {...}, entries: [...] }` with `kind` / `owner_user_id` / `balance_cents` on `account` and `debit_cents` / `credit_cents` / `transaction_id` / `lease_id` per entry; the view reads a flat account and `amount_cents` / `running_balance` per entry.
 - Moderation lists fetch only the first page (the API default of 25) and filter client-side; the API's `?query=`, `limit`, and `offset` are not used yet.
 - `GET /v1/admin/leases` and `POST /v1/admin/leases/:id/end` (force-end) exist on the API but have no page here yet.

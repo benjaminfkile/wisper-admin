@@ -214,31 +214,37 @@ describe("admin client", () => {
     expect(result.credit_account_id).toBe("platform");
   });
 
-  it("getAudit encodes query params and unwraps {data, next_cursor}", async () => {
+  it("getAudit encodes query params and unwraps {data, next_cursor}, reading meta as the details payload", async () => {
+    // Real AuditEntry: the API returns the structured payload as `meta`
+    // (not metadata/context/details). The client must read `meta` so the
+    // Details column is not blank.
     const calls = stubFetch({
       body: {
         data: [
           {
             id: "e-1",
-            actor_id: "admin@wisper.dev",
+            actor_id: "11111111-1111-4111-8111-111111111111",
             action: "host.suspend",
             target_type: "host",
-            target_id: "h-2",
-            context: { reason: "fraud" },
+            target_id: "22222222-2222-4222-8222-222222222222",
+            meta: { reason: "fraud" },
             created_at: "2026-07-20T00:00:00Z",
           },
         ],
         next_cursor: "cursor-2",
       },
     });
-    const res = await admin.getAudit({ actor: "admin@wisper.dev", limit: 25 });
+    const res = await admin.getAudit({
+      actor: "11111111-1111-4111-8111-111111111111",
+      limit: 25,
+    });
     expect(calls[0].url).toBe(
-      "/wisper/v1/admin/audit?actor=admin%40wisper.dev&limit=25",
+      "/wisper/v1/admin/audit?actor=11111111-1111-4111-8111-111111111111&limit=25",
     );
-    // Tolerant normalization maps actor_id -> actor and context -> metadata.
+    // Tolerant normalization maps actor_id -> actor and meta -> metadata.
     expect(res.data[0]).toMatchObject({
       id: "e-1",
-      actor: "admin@wisper.dev",
+      actor: "11111111-1111-4111-8111-111111111111",
       action: "host.suspend",
       target_type: "host",
       metadata: { reason: "fraud" },
@@ -265,22 +271,26 @@ describe("admin client", () => {
     expect(policy.versions).toHaveLength(2);
   });
 
-  it("getLedgerAccount targets the account path and returns balance_cents + entry amount_cents", async () => {
-    // Real LedgerAccountView: balance_cents (not balance).
-    // Real LedgerEntryView: amount_cents (not amount), running_balance (not balance_after).
+  it("getLedgerAccount flattens the {account, entries} envelope and exposes the real field names", async () => {
+    // Real wire shape: `{ account: { id, kind, owner_user_id, currency,
+    // balance_cents }, entries: [{ debit_cents, credit_cents, transaction_id,
+    // lease_id, created_at }] }`. The client flattens the envelope so callers
+    // see one flat LedgerAccount with the entries array attached.
     const calls = stubFetch({
       body: {
-        id: "acct-1",
-        owner_type: "user",
-        owner_id: "u-1",
-        balance_cents: 50000,
-        currency: "USD",
+        account: {
+          id: "acct-1",
+          kind: "user_wallet",
+          owner_user_id: "u-1",
+          balance_cents: 50000,
+          currency: "USD",
+        },
         entries: [
           {
-            id: "le-1",
-            amount_cents: 50000,
-            running_balance: 50000,
-            kind: "topup",
+            credit_cents: 50000,
+            debit_cents: 0,
+            transaction_id: "txn-1",
+            lease_id: "lease-9",
             created_at: "2026-07-20T00:00:00Z",
           },
         ],
@@ -288,9 +298,23 @@ describe("admin client", () => {
     });
     const account = await admin.getLedgerAccount("acct-1");
     expect(calls[0].url).toBe("/wisper/v1/admin/ledger/accounts/acct-1");
+    expect(account.id).toBe("acct-1");
+    expect(account.kind).toBe("user_wallet");
+    expect(account.owner_user_id).toBe("u-1");
     expect(account.balance_cents).toBe(50000);
-    expect(account.entries[0].amount_cents).toBe(50000);
-    expect(account.entries[0].running_balance).toBe(50000);
+    expect(account.entries[0]).toMatchObject({
+      credit_cents: 50000,
+      debit_cents: 0,
+      transaction_id: "txn-1",
+      lease_id: "lease-9",
+    });
+  });
+
+  it("getLedgerAccount degrades a missing envelope to an empty entries list without crashing", async () => {
+    stubFetch({ body: { unexpected: true } });
+    const account = await admin.getLedgerAccount("acct-9");
+    expect(account.id).toBe("acct-9");
+    expect(account.entries).toEqual([]);
   });
 
   it("surfaces the uniform error envelope as WisperError", async () => {
