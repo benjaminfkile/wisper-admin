@@ -17,14 +17,12 @@ const updatePolicy = vi.mocked(admin.updatePolicy);
 // PolicyView fields: fee_bps, min_topup_cents, max_concurrent_leases_per_user,
 // max_ttl_seconds_cap, min_isolation, first_topup_max_cents,
 // new_account_window_hours, new_account_max_topup_cents_per_day,
-// max_spend_cents_per_day, effective_from, host_signups_enabled,
-// plus server-assigned: id, created_by.
+// max_spend_cents_per_day, effective_from, plus server-assigned: id, created_by.
 const ACTIVE: PolicyVersion = {
   id: "pol-3",
   fee_bps: 500,
   min_topup_cents: 1000,           // $10.00
   max_concurrent_leases_per_user: 4,
-  host_signups_enabled: true,
   effective_from: "2026-07-10T12:00:00Z",
   created_by: "admin@wisper.dev",
 };
@@ -34,7 +32,6 @@ const V2: PolicyVersion = {
   fee_bps: 400,
   min_topup_cents: 1000,           // $10.00
   max_concurrent_leases_per_user: 3,
-  host_signups_enabled: true,
   effective_from: "2026-06-01T12:00:00Z",
   created_by: "founder@wisper.dev",
 };
@@ -193,6 +190,21 @@ describe("PolicyEditor", () => {
     expect(payload).not.toHaveProperty("max_price_per_hour");
     expect(payload).not.toHaveProperty("default_network");
     expect(payload).not.toHaveProperty("min_topup");
+    // host_signups_enabled is not part of PolicyUpdateRequest / PolicyView; it
+    // must not be sent (the API would ignore it and the switch would silently
+    // reset to off after every save).
+    expect(payload).not.toHaveProperty("host_signups_enabled");
+  });
+
+  it("does not render a host-signups toggle (no such field on PolicyView)", async () => {
+    getPolicy.mockResolvedValue(POLICY);
+    render(<PolicyEditor />);
+    // Wait for the form to hydrate before asserting absence.
+    await screen.findByLabelText("Platform fee");
+    expect(screen.queryByLabelText(/host signups/i)).toBeNull();
+    // The version-history "Signups" column is also gone.
+    const table = screen.getByRole("table", { name: /policy version history/i });
+    expect(within(table).queryByText(/signups/i)).toBeNull();
   });
 
   it("surfaces a load error with a retry", async () => {

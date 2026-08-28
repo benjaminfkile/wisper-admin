@@ -114,7 +114,6 @@ see **Local development** above.
 
 The admin client unwraps envelopes tolerantly, but several shapes it sends or reads differ from what the current wisper-api defines (see its `docs/API.md` and `Admin/AdminModels.cs`). Until the client is updated:
 
-- Policy: `host_signups_enabled` is not part of the API's policy contract; the switch is sent but ignored and never comes back.
 - Audit: the API parses `actor` and `target_id` as UUIDs (a non-UUID filter is a `validation_error`) and returns each row's details as `meta`, which the log's Details column does not read yet.
 - Ledger forensics: the API returns `{ account: {...}, entries: [...] }` with `kind` / `owner_user_id` / `balance_cents` on `account` and `debit_cents` / `credit_cents` / `transaction_id` / `lease_id` per entry; the view reads a flat account and `amount_cents` / `running_balance` per entry.
 - Moderation lists fetch only the first page (the API default of 25) and filter client-side; the API's `?query=`, `limit`, and `offset` are not used yet.

@@ -124,8 +124,6 @@ export interface PolicyRules {
   max_spend_cents_per_day?: number;
   /** When this policy revision takes effect (ISO-8601). Omit for immediate. */
   effective_from?: string;
-  /** Whether new host registrations are accepted. */
-  host_signups_enabled?: boolean;
 }
 
 /** A single point-in-time policy revision returned by the server (PolicyView).
