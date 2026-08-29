@@ -320,6 +320,53 @@ describe("admin client", () => {
     expect(policy.versions).toHaveLength(2);
   });
 
+  it("listLedgerAccounts forwards kind + owner_user_id + limit/offset and returns the {data, next_offset} envelope", async () => {
+    // Real GET /v1/admin/ledger/accounts item: id, kind, owner_user_id,
+    // owner_email, currency, balance_cents. The list endpoint is the picker's
+    // backing search: the operator narrows by kind and (for owner-scoped
+    // kinds) owner_user_id.
+    const calls = stubFetch({
+      body: {
+        data: [
+          {
+            id: "acct-w-1",
+            kind: "user_wallet",
+            owner_user_id: "u-42",
+            owner_email: "dana@example.com",
+            currency: "USD",
+            balance_cents: 4200,
+          },
+        ],
+        next_offset: 25,
+      },
+    });
+    const res = await admin.listLedgerAccounts({
+      kind: "user_wallet",
+      owner_user_id: "u-42",
+      limit: 25,
+      offset: 0,
+    });
+    expect(res.data[0]).toMatchObject({
+      id: "acct-w-1",
+      kind: "user_wallet",
+      owner_user_id: "u-42",
+      owner_email: "dana@example.com",
+      currency: "USD",
+      balance_cents: 4200,
+    });
+    expect(res.next_offset).toBe(25);
+    expect(calls[0].url).toBe(
+      "/wisper/v1/admin/ledger/accounts?kind=user_wallet&owner_user_id=u-42&limit=25&offset=0",
+    );
+  });
+
+  it("listLedgerAccounts omits empty filters from the URL and degrades a misshaped envelope to empty data", async () => {
+    const calls = stubFetch({ body: { unexpected: true } });
+    const res = await admin.listLedgerAccounts();
+    expect(calls[0].url).toBe("/wisper/v1/admin/ledger/accounts");
+    expect(res).toEqual({ data: [], next_offset: null });
+  });
+
   it("getLedgerAccount flattens the {account, entries} envelope and exposes the real field names", async () => {
     // Real wire shape: `{ account: { id, kind, owner_user_id, currency,
     // balance_cents }, entries: [{ debit_cents, credit_cents, transaction_id,

@@ -322,10 +322,43 @@ export interface LedgerAccount {
   kind?: string;
   /** Owning user id (absent on platform accounts). */
   owner_user_id?: string;
+  /** Owning user's email (present on owner-scoped accounts; returned by the
+   *  list endpoint so the picker can label a row without a second lookup). */
+  owner_email?: string;
   /** Current balance in minor units. */
   balance_cents?: number;
   currency?: string;
   entries: LedgerEntry[];
+}
+
+/** A single row in GET /v1/admin/ledger/accounts. Slimmer than
+ *  {@link LedgerAccount}: no `entries` array (the list endpoint returns only
+ *  the account header, not its ledger entries). */
+export interface LedgerAccountSummary {
+  id: string;
+  kind?: string;
+  owner_user_id?: string;
+  owner_email?: string;
+  balance_cents?: number;
+  currency?: string;
+}
+
+/** GET /v1/admin/ledger/accounts envelope: a page of account summaries plus
+ *  an offset for the next page (null when exhausted). */
+export interface LedgerAccountList {
+  data: LedgerAccountSummary[];
+  next_offset?: number | string | null;
+}
+
+/** Query params for GET /v1/admin/ledger/accounts. `kind` narrows to one
+ *  account kind (e.g. "user_wallet"); `owner_user_id` restricts to the
+ *  accounts owned by that user (required by the API for owner-scoped kinds
+ *  like user_wallet / host_earnings). */
+export interface LedgerAccountListQuery {
+  kind?: string;
+  owner_user_id?: string;
+  limit?: number;
+  offset?: number;
 }
 
 /** A single ledger entry (LedgerEntryView). Double-entry: exactly one of

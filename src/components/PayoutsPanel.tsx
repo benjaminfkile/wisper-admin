@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import AlertTitle from "@mui/material/AlertTitle";
 import Box from "@mui/material/Box";
@@ -9,13 +9,19 @@ import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
 import Divider from "@mui/material/Divider";
 import Grid from "@mui/material/Grid";
 import InputAdornment from "@mui/material/InputAdornment";
+import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
+import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
@@ -25,6 +31,7 @@ import { newIdempotencyKey } from "@/lib/idempotency";
 import { formatMoney, parseMoneyToMinor } from "@/lib/format";
 import type {
   LedgerAccount,
+  LedgerAccountSummary,
   LedgerMutationResult,
   RefundResponse,
 } from "@/lib/wisper/types";
@@ -230,10 +237,10 @@ function RefundForm() {
  *  client-side and preview each account (kind / owner / current balance) so a
  *  swapped debit/credit or a wrong id is visible before posting.
  *
- *  TODO(wisper-api): switch to a picker backed by
- *  GET /v1/admin/ledger/accounts?kind=&owner_user_id= once that list endpoint
- *  ships on the API's grunt branch. Until then, the operator pastes UUIDs (a
- *  separate wisper-api task adds the endpoint). */
+ *  Each leg has a picker (GET /v1/admin/ledger/accounts, narrowed by kind and,
+ *  for owner-scoped kinds like user_wallet / host_earnings, an owner filter)
+ *  that fills the id, plus a raw UUID text field as a fallback for the case
+ *  where the operator already has the id in hand. */
 function AdjustmentForm() {
   const [debitAccountId, setDebitAccountId] = useState("");
   const [creditAccountId, setCreditAccountId] = useState("");
@@ -243,6 +250,7 @@ function AdjustmentForm() {
   const [errorDetails, setErrorDetails] = useState<unknown>(null);
   const [result, setResult] = useState<LedgerMutationResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pickerLeg, setPickerLeg] = useState<"debit" | "credit" | null>(null);
   const keyRef = useRef<string | null>(null);
 
   const debit = debitAccountId.trim();
@@ -327,18 +335,28 @@ function AdjustmentForm() {
         >
           <Stack spacing={2}>
             <Box>
-              <TextField
-                fullWidth
-                label="Debit account id"
-                required
-                value={debitAccountId}
-                onChange={(e) => setDebitAccountId(e.target.value)}
-                error={!debitValid || sameAccount}
-                helperText={debitHelper}
-                slotProps={{
-                  htmlInput: { "aria-label": "Adjustment debit account id" },
-                }}
-              />
+              <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                <TextField
+                  fullWidth
+                  label="Debit account id"
+                  required
+                  value={debitAccountId}
+                  onChange={(e) => setDebitAccountId(e.target.value)}
+                  error={!debitValid || sameAccount}
+                  helperText={debitHelper}
+                  slotProps={{
+                    htmlInput: { "aria-label": "Adjustment debit account id" },
+                  }}
+                />
+                <Button
+                  variant="outlined"
+                  onClick={() => setPickerLeg("debit")}
+                  aria-label="Pick debit account"
+                  sx={{ mt: 1, whiteSpace: "nowrap" }}
+                >
+                  Pick account
+                </Button>
+              </Stack>
               <AccountPreview
                 label="Debit account"
                 preview={debitPreview}
@@ -346,18 +364,28 @@ function AdjustmentForm() {
               />
             </Box>
             <Box>
-              <TextField
-                fullWidth
-                label="Credit account id"
-                required
-                value={creditAccountId}
-                onChange={(e) => setCreditAccountId(e.target.value)}
-                error={!creditValid || sameAccount}
-                helperText={creditHelper}
-                slotProps={{
-                  htmlInput: { "aria-label": "Adjustment credit account id" },
-                }}
-              />
+              <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                <TextField
+                  fullWidth
+                  label="Credit account id"
+                  required
+                  value={creditAccountId}
+                  onChange={(e) => setCreditAccountId(e.target.value)}
+                  error={!creditValid || sameAccount}
+                  helperText={creditHelper}
+                  slotProps={{
+                    htmlInput: { "aria-label": "Adjustment credit account id" },
+                  }}
+                />
+                <Button
+                  variant="outlined"
+                  onClick={() => setPickerLeg("credit")}
+                  aria-label="Pick credit account"
+                  sx={{ mt: 1, whiteSpace: "nowrap" }}
+                >
+                  Pick account
+                </Button>
+              </Stack>
               <AccountPreview
                 label="Credit account"
                 preview={creditPreview}
@@ -421,6 +449,17 @@ function AdjustmentForm() {
           </Stack>
         </Box>
       </CardContent>
+
+      <AccountPickerDialog
+        key={pickerLeg ?? "closed"}
+        leg={pickerLeg}
+        onClose={() => setPickerLeg(null)}
+        onSelect={(id) => {
+          if (pickerLeg === "debit") setDebitAccountId(id);
+          else if (pickerLeg === "credit") setCreditAccountId(id);
+          setPickerLeg(null);
+        }}
+      />
     </Card>
   );
 }
@@ -754,5 +793,358 @@ function LegLabel({
         </Typography>
       )}
     </Box>
+  );
+}
+
+/** Ledger-account kinds the picker offers. The two owner-scoped kinds live in
+ *  {@link OWNER_SCOPED_KINDS} so the picker knows when to require an owner
+ *  filter before the accounts query can go out (the API requires
+ *  `owner_user_id` for those kinds). */
+const KIND_OPTIONS = [
+  "user_wallet",
+  "host_earnings",
+  "platform_revenue",
+  "platform_cash",
+  "stripe_fees",
+] as const;
+
+const OWNER_SCOPED_KINDS = new Set<string>(["user_wallet", "host_earnings"]);
+
+/** How many rows we request per accounts page. */
+const PICKER_PAGE = 25;
+
+/** Debounce for the owner search box: wait this long after the last keystroke
+ *  before resolving the typed value to an owner user id. */
+const PICKER_DEBOUNCE_MS = 300;
+
+/** Convert the API's `next_offset` (number, numeric string, or null) into a
+ *  plain number, or `null` when there is no next page. */
+function toOffset(v: number | string | null | undefined): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Resolves a typed owner filter (email or user id) into an `owner_user_id`
+ *  for the accounts query. A UUID passes through directly; anything else is
+ *  looked up via GET /v1/admin/users?query= and the first match's id is used.
+ *  Debounced so a fresh keystroke doesn't fire a request per character. */
+function useOwnerResolver(input: string, enabled: boolean): {
+  loading: boolean;
+  ownerUserId: string | null;
+  ownerEmail: string | null;
+  notFound: boolean;
+  error: string | null;
+} {
+  const [state, setState] = useState<{
+    loading: boolean;
+    ownerUserId: string | null;
+    ownerEmail: string | null;
+    notFound: boolean;
+    error: string | null;
+  }>({
+    loading: false,
+    ownerUserId: null,
+    ownerEmail: null,
+    notFound: false,
+    error: null,
+  });
+  const seqRef = useRef(0);
+
+  useEffect(() => {
+    const trimmed = input.trim();
+    if (!enabled || trimmed === "") {
+      seqRef.current += 1;
+      setState({
+        loading: false,
+        ownerUserId: null,
+        ownerEmail: null,
+        notFound: false,
+        error: null,
+      });
+      return;
+    }
+    if (isUuid(trimmed)) {
+      seqRef.current += 1;
+      setState({
+        loading: false,
+        ownerUserId: trimmed,
+        ownerEmail: null,
+        notFound: false,
+        error: null,
+      });
+      return;
+    }
+    const seq = ++seqRef.current;
+    setState((prev) => ({ ...prev, loading: true, error: null, notFound: false }));
+    const timer = setTimeout(() => {
+      admin
+        .listUsers({ query: trimmed, limit: 1, offset: 0 })
+        .then((res) => {
+          if (seqRef.current !== seq) return;
+          const hit = res.data[0];
+          if (!hit) {
+            setState({
+              loading: false,
+              ownerUserId: null,
+              ownerEmail: null,
+              notFound: true,
+              error: null,
+            });
+            return;
+          }
+          setState({
+            loading: false,
+            ownerUserId: hit.id,
+            ownerEmail: hit.email ?? null,
+            notFound: false,
+            error: null,
+          });
+        })
+        .catch((err: unknown) => {
+          if (seqRef.current !== seq) return;
+          setState({
+            loading: false,
+            ownerUserId: null,
+            ownerEmail: null,
+            notFound: false,
+            error:
+              err instanceof WisperError
+                ? err.message
+                : "Failed to look up the owner.",
+          });
+        });
+    }, PICKER_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [input, enabled]);
+
+  return state;
+}
+
+/** Modal-backed picker for one leg of the adjustment. The operator narrows by
+ *  kind (required) and, for owner-scoped kinds, by owner (email or user id),
+ *  then picks a row from the paged GET /v1/admin/ledger/accounts result. The
+ *  selected id is handed back to the caller, which fills the leg's field. */
+function AccountPickerDialog({
+  leg,
+  onClose,
+  onSelect,
+}: {
+  leg: "debit" | "credit" | null;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const open = leg != null;
+  const [kind, setKind] = useState<string>("");
+  const [ownerInput, setOwnerInput] = useState("");
+  const [rows, setRows] = useState<LedgerAccountSummary[] | null>(null);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestSeqRef = useRef(0);
+
+  const ownerScoped = OWNER_SCOPED_KINDS.has(kind);
+  const owner = useOwnerResolver(ownerInput, ownerScoped);
+  const canQuery = kind !== "" && (!ownerScoped || owner.ownerUserId != null);
+  const ownerUserId = ownerScoped ? owner.ownerUserId : null;
+
+  const runFirst = useCallback(async () => {
+    if (!canQuery) {
+      setRows(null);
+      setNextOffset(null);
+      return;
+    }
+    const seq = ++requestSeqRef.current;
+    setLoading(true);
+    setError(null);
+    setRows(null);
+    setNextOffset(null);
+    try {
+      const res = await admin.listLedgerAccounts({
+        kind,
+        owner_user_id: ownerUserId ?? undefined,
+        limit: PICKER_PAGE,
+        offset: 0,
+      });
+      if (requestSeqRef.current !== seq) return;
+      setRows(res.data);
+      setNextOffset(toOffset(res.next_offset));
+    } catch (err) {
+      if (requestSeqRef.current !== seq) return;
+      setError(
+        err instanceof WisperError ? err.message : "Failed to load accounts.",
+      );
+    } finally {
+      if (requestSeqRef.current === seq) setLoading(false);
+    }
+  }, [canQuery, kind, ownerUserId]);
+
+  useEffect(() => {
+    if (!open) return;
+    void runFirst();
+  }, [open, runFirst]);
+
+  const loadMore = async () => {
+    if (nextOffset == null) return;
+    const seq = requestSeqRef.current;
+    setLoadingMore(true);
+    try {
+      const res = await admin.listLedgerAccounts({
+        kind,
+        owner_user_id: ownerUserId ?? undefined,
+        limit: PICKER_PAGE,
+        offset: nextOffset,
+      });
+      if (requestSeqRef.current !== seq) return;
+      setRows((prev) => [...(prev ?? []), ...res.data]);
+      setNextOffset(toOffset(res.next_offset));
+    } catch (err) {
+      if (requestSeqRef.current !== seq) return;
+      setError(
+        err instanceof WisperError
+          ? err.message
+          : "Failed to load more accounts.",
+      );
+    } finally {
+      if (requestSeqRef.current === seq) setLoadingMore(false);
+    }
+  };
+
+  const shown = rows ?? [];
+  const legLabel = leg === "debit" ? "debit" : leg === "credit" ? "credit" : "";
+  const ownerHelper = (() => {
+    if (!ownerScoped) return "";
+    if (ownerInput.trim() === "") return "Enter an email or user id to search.";
+    if (owner.loading) return "Looking up owner…";
+    if (owner.error) return owner.error;
+    if (owner.notFound) return "No matching user.";
+    if (owner.ownerUserId) {
+      return owner.ownerEmail
+        ? `Owner ${owner.ownerEmail} (${owner.ownerUserId}).`
+        : `Owner ${owner.ownerUserId}.`;
+    }
+    return "";
+  })();
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle>Pick {legLabel} account</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ mt: 1 }}>
+          <TextField
+            select
+            label="Kind"
+            required
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+            helperText="Narrow the accounts list by ledger kind."
+            slotProps={{ htmlInput: { "aria-label": "Picker account kind" } }}
+          >
+            <MenuItem value="">Choose a kind</MenuItem>
+            {KIND_OPTIONS.map((k) => (
+              <MenuItem key={k} value={k}>
+                {k}
+              </MenuItem>
+            ))}
+          </TextField>
+
+          {ownerScoped && (
+            <TextField
+              label="Owner (email or user id)"
+              value={ownerInput}
+              onChange={(e) => setOwnerInput(e.target.value)}
+              helperText={ownerHelper}
+              error={owner.notFound || owner.error != null}
+              slotProps={{
+                htmlInput: { "aria-label": "Picker owner email or user id" },
+              }}
+            />
+          )}
+
+          {kind === "" ? (
+            <Typography variant="caption" color="text.secondary">
+              Choose a kind to list accounts.
+            </Typography>
+          ) : ownerScoped && !canQuery ? (
+            <Typography variant="caption" color="text.secondary">
+              Resolve an owner to list {kind} accounts.
+            </Typography>
+          ) : loading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+              <CircularProgress size={20} aria-label="Loading accounts" />
+            </Box>
+          ) : error ? (
+            <Alert severity="error">{error}</Alert>
+          ) : shown.length === 0 ? (
+            <Typography color="text.secondary">
+              No accounts match this filter.
+            </Typography>
+          ) : (
+            <>
+              <Table
+                size="small"
+                aria-label={`Picker ${legLabel} account results`}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Account id</TableCell>
+                    <TableCell>Owner</TableCell>
+                    <TableCell align="right">Balance</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {shown.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell sx={{ wordBreak: "break-all" }}>
+                        <Typography variant="body2">{a.id}</Typography>
+                        {a.kind && (
+                          <Typography variant="caption" color="text.secondary">
+                            {a.kind}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell sx={{ wordBreak: "break-all" }}>
+                        {a.owner_email || a.owner_user_id || "platform"}
+                      </TableCell>
+                      <TableCell align="right">
+                        {a.balance_cents != null
+                          ? formatMoney(a.balance_cents, a.currency)
+                          : ""}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => onSelect(a.id)}
+                          aria-label={`Use account ${a.id}`}
+                        >
+                          Use
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <Box sx={{ display: "flex", justifyContent: "center" }}>
+                {nextOffset != null ? (
+                  <Button onClick={() => void loadMore()} disabled={loadingMore}>
+                    {loadingMore ? "Loading…" : "Load more"}
+                  </Button>
+                ) : (
+                  <Typography variant="caption" color="text.secondary">
+                    End of results.
+                  </Typography>
+                )}
+              </Box>
+            </>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Cancel</Button>
+      </DialogActions>
+    </Dialog>
   );
 }

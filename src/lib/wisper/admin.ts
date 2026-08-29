@@ -23,6 +23,9 @@ import type {
   AuditList,
   AuditQuery,
   LedgerAccount,
+  LedgerAccountList,
+  LedgerAccountListQuery,
+  LedgerAccountSummary,
   LedgerMutationResult,
   PolicyRules,
   PolicyVersion,
@@ -214,6 +217,24 @@ export const admin = {
     return request<AuditList>(`${V1}/audit${encode({ ...query })}`).then((r) => ({
       data: unwrapData<unknown>(r).map(normalizeAudit),
       next_cursor: str((r as { next_cursor?: unknown } | null)?.next_cursor),
+    }));
+  },
+
+  /** GET /v1/admin/ledger/accounts: a page of ledger-account summaries,
+   *  optionally narrowed by `kind` (e.g. "user_wallet") and `owner_user_id`.
+   *  Returns the `{ data, next_offset }` envelope, unwrapped tolerantly so a
+   *  misshaped response degrades to an empty page instead of crashing the
+   *  picker that drives it. */
+  listLedgerAccounts(
+    params: LedgerAccountListQuery = {},
+  ): Promise<LedgerAccountList> {
+    return request<LedgerAccountList>(
+      `${V1}/ledger/accounts${encode({ ...params })}`,
+    ).then((r) => ({
+      data: unwrapData<LedgerAccountSummary>(r),
+      next_offset:
+        (r as { next_offset?: number | string | null } | null)?.next_offset ??
+        null,
     }));
   },
 

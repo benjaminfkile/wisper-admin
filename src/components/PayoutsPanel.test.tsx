@@ -15,12 +15,16 @@ vi.mock("@/lib/wisper/admin", () => ({
     createRefund: vi.fn(),
     createAdjustment: vi.fn(),
     getLedgerAccount: vi.fn(),
+    listLedgerAccounts: vi.fn(),
+    listUsers: vi.fn(),
   },
 }));
 
 const createRefund = vi.mocked(admin.createRefund);
 const createAdjustment = vi.mocked(admin.createAdjustment);
 const getLedgerAccount = vi.mocked(admin.getLedgerAccount);
+const listLedgerAccounts = vi.mocked(admin.listLedgerAccounts);
+const listUsers = vi.mocked(admin.listUsers);
 
 // Two real ledger-account UUIDs used by the adjustment tests. The API requires
 // both legs to be existing, distinct account ids that parse as UUIDs.
@@ -81,6 +85,8 @@ describe("PayoutsPanel", () => {
     createRefund.mockReset();
     createAdjustment.mockReset();
     getLedgerAccount.mockReset();
+    listLedgerAccounts.mockReset();
+    listUsers.mockReset();
     stubAccountLookups();
   });
   afterEach(() => vi.clearAllMocks());
@@ -404,6 +410,134 @@ describe("PayoutsPanel", () => {
     const firstKey = createAdjustment.mock.calls[0][1];
     const secondKey = createAdjustment.mock.calls[1][1];
     expect(secondKey).toBe(firstKey);
+  });
+
+  it("picks a platform account from the picker and fills the debit id (no owner filter required)", async () => {
+    // Platform-scoped kinds (platform_revenue, platform_cash, stripe_fees) do
+    // not require an owner filter: the picker fires listLedgerAccounts as soon
+    // as a kind is chosen and the selected id fills the debit leg.
+    const PLATFORM_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    listLedgerAccounts.mockResolvedValueOnce({
+      data: [
+        {
+          id: PLATFORM_ID,
+          kind: "platform_revenue",
+          currency: "USD",
+          balance_cents: 1000000,
+        },
+      ],
+      next_offset: null,
+    });
+    render(<PayoutsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /pick debit account/i }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    // MUI's <TextField select> renders as a listbox opener; pick the option
+    // by clicking the button then the surfaced option.
+    await userEvent.click(within(dialog).getByLabelText(/picker account kind/i));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "platform_revenue" }),
+    );
+
+    await waitFor(() =>
+      expect(listLedgerAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "platform_revenue", limit: 25, offset: 0 }),
+      ),
+    );
+    // No owner filter fires for a platform-scoped kind.
+    const [call] = listLedgerAccounts.mock.calls;
+    expect(call[0].owner_user_id).toBeUndefined();
+
+    // Row appears; hit Use → picker closes and the debit field fills.
+    await userEvent.click(
+      await within(dialog).findByRole("button", {
+        name: `Use account ${PLATFORM_ID}`,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      (screen.getByLabelText("Adjustment debit account id") as HTMLInputElement)
+        .value,
+    ).toBe(PLATFORM_ID);
+  });
+
+  it("picks a user wallet by owner email and fills the credit id", async () => {
+    // user_wallet is owner-scoped: the operator types an owner (email or user
+    // id); the picker resolves the email via listUsers and then queries
+    // listLedgerAccounts with kind=user_wallet + owner_user_id.
+    const OWNER_ID = "u-42";
+    const WALLET_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    listUsers.mockResolvedValueOnce({
+      data: [{ id: OWNER_ID, email: "dana@example.com", status: "active" }],
+      next_offset: null,
+    });
+    listLedgerAccounts.mockResolvedValueOnce({
+      data: [
+        {
+          id: WALLET_ID,
+          kind: "user_wallet",
+          owner_user_id: OWNER_ID,
+          owner_email: "dana@example.com",
+          currency: "USD",
+          balance_cents: 4200,
+        },
+      ],
+      next_offset: null,
+    });
+    render(<PayoutsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /pick credit account/i }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByLabelText(/picker account kind/i));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "user_wallet" }),
+    );
+
+    // Owner filter now appears for the owner-scoped kind.
+    const ownerField = await within(dialog).findByLabelText(
+      /picker owner email or user id/i,
+    );
+    await userEvent.type(ownerField, "dana@example.com");
+
+    // The email resolves to the owner id via listUsers.
+    await waitFor(() =>
+      expect(listUsers).toHaveBeenCalledWith(
+        expect.objectContaining({ query: "dana@example.com" }),
+      ),
+    );
+
+    // The accounts query fires with the resolved owner id.
+    await waitFor(() =>
+      expect(listLedgerAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "user_wallet",
+          owner_user_id: OWNER_ID,
+        }),
+      ),
+    );
+
+    await userEvent.click(
+      await within(dialog).findByRole("button", {
+        name: `Use account ${WALLET_ID}`,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      (screen.getByLabelText("Adjustment credit account id") as HTMLInputElement)
+        .value,
+    ).toBe(WALLET_ID);
   });
 
   it("keeps the refund submit button disabled until required fields are valid", async () => {
