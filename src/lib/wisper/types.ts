@@ -259,28 +259,22 @@ export interface LedgerMutationResult {
   credit_balance_cents?: number;
 }
 
-/** Response from POST /v1/admin/refunds. Refunds are Stripe-mediated, so the
- *  server's RefundResponse describes the refund itself (identifier, amount,
- *  status, and the consumer + Stripe anchor); it does NOT include the ledger
- *  fields (no `transaction_id`, `debit_account_id`, or `credit_account_id`).
- *  Any downstream ledger entries the API writes are visible through the
- *  ledger forensics view, not on this envelope. */
+/** Response from POST /v1/admin/refunds. The API refunds unspent wallet credits
+ *  against a top-up, so the server returns exactly four fields: the refund id,
+ *  the amount that came off the wallet, the currency, and the wallet's new
+ *  balance after the refund. There is no `user_id`, `status`, `payment_intent`,
+ *  `reason`, or `created_at` on this envelope, and no ledger-transaction
+ *  fields; any downstream ledger entries are visible through the ledger
+ *  forensics view. */
 export interface RefundResponse {
   /** Server-assigned refund id. */
   refund_id: string;
-  /** Consumer who was refunded. */
-  user_id: string;
   /** Amount refunded, in minor units. */
   amount_cents: number;
-  /** ISO currency code (e.g. "USD"), when the API includes one. */
-  currency?: string;
-  /** Refund lifecycle status (e.g. "succeeded", "pending", "failed"). */
-  status: string;
-  /** Stripe PaymentIntent id, when the refund is tied to a specific charge. */
-  payment_intent?: string;
-  /** Reason recorded on the refund. */
-  reason?: string;
-  created_at?: string;
+  /** ISO currency code (e.g. "USD"). */
+  currency: string;
+  /** Wallet balance after the refund, in minor units. */
+  balance_cents: number;
 }
 
 /** A single audit-log entry (GET /v1/admin/audit). Field names are read

@@ -148,19 +148,17 @@ describe("admin client", () => {
 
   it("createRefund POSTs user_id + amount_cents (no lease_id) with an Idempotency-Key and returns the RefundResponse", async () => {
     // Real AdminRefundRequest: user_id, amount_cents, reason, optional payment_intent.
-    // No lease_id — the API ignores it; payment_intent is the right optional anchor.
-    // The real RefundResponse describes the refund itself (refund_id, amount,
-    // status, and the Stripe anchor), NOT a ledger transaction. There is no
-    // `transaction_id`, `debit_account_id`, or `credit_account_id` on this DTO.
+    // No lease_id: the API ignores it; payment_intent is the right optional anchor.
+    // The real RefundResponse is exactly { refund_id, amount_cents, currency,
+    // balance_cents }: the refund id, the amount that came off the wallet, the
+    // currency, and the wallet's new balance. There is no user_id, status,
+    // payment_intent, reason, created_at, or ledger-transaction field on it.
     const calls = stubFetch({
       body: {
         refund_id: "rfnd_1",
-        user_id: "u-1",
         amount_cents: 500,
         currency: "USD",
-        status: "succeeded",
-        reason: "outage",
-        created_at: "2026-08-01T00:00:00Z",
+        balance_cents: 4500,
       },
     });
     const res = await admin.createRefund(
@@ -174,11 +172,14 @@ describe("admin client", () => {
     const body = JSON.parse(calls[0].init.body as string);
     expect(body).toMatchObject({ user_id: "u-1", amount_cents: 500, reason: "outage" });
     expect(body).not.toHaveProperty("lease_id");
-    // The refund response carries the refund's own fields, not ledger fields.
+    // The refund response is the four-field envelope.
     expect(res.refund_id).toBe("rfnd_1");
-    expect(res.status).toBe("succeeded");
-    expect(res.user_id).toBe("u-1");
     expect(res.amount_cents).toBe(500);
+    expect(res.currency).toBe("USD");
+    expect(res.balance_cents).toBe(4500);
+    expect(res).not.toHaveProperty("user_id");
+    expect(res).not.toHaveProperty("status");
+    expect(res).not.toHaveProperty("payment_intent");
     expect(res).not.toHaveProperty("transaction_id");
     expect(res).not.toHaveProperty("debit_account_id");
     expect(res).not.toHaveProperty("credit_account_id");
@@ -188,10 +189,9 @@ describe("admin client", () => {
     const calls = stubFetch({
       body: {
         refund_id: "rfnd_2",
-        user_id: "u-2",
         amount_cents: 1000,
-        status: "succeeded",
-        payment_intent: "pi_abc123",
+        currency: "USD",
+        balance_cents: 0,
       },
     });
     const res = await admin.createRefund(
@@ -200,7 +200,8 @@ describe("admin client", () => {
     );
     const body = JSON.parse(calls[0].init.body as string);
     expect(body.payment_intent).toBe("pi_abc123");
-    expect(res.payment_intent).toBe("pi_abc123");
+    expect(res.refund_id).toBe("rfnd_2");
+    expect(res.balance_cents).toBe(0);
   });
 
   it("createAdjustment POSTs double-entry shape (debit/credit accounts, positive amount_cents)", async () => {
