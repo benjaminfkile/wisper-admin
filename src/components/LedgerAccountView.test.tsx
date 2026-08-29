@@ -83,6 +83,88 @@ describe("LedgerAccountView", () => {
     expect(shown).toContain("$2,000.00");
   });
 
+  it("walks the running balance in the correct direction for a credit-normal (host_earnings) account over multiple rows", async () => {
+    // host_earnings is credit-normal (balance grows with credits). Anchor at
+    // the current $10.00 balance and walk older, subtracting credit - debit:
+    //   row 3 (newest, credit $3): after = $10.00, running = 10 - 3 = 7
+    //   row 2 (debit $2):          after = $7.00,  running = 7 - (-2) = 9
+    //   row 1 (oldest, credit $4): after = $9.00,  running = 9 - 4 = 5
+    getLedgerAccount.mockResolvedValue({
+      id: "acct-c",
+      kind: "host_earnings",
+      balance_cents: 1000,
+      currency: "USD",
+      entries: [
+        { credit_cents: 400, transaction_id: "c-1", created_at: "2026-07-10T00:00:00Z" },
+        { debit_cents: 200, transaction_id: "c-2", created_at: "2026-07-11T00:00:00Z" },
+        { credit_cents: 300, transaction_id: "c-3", created_at: "2026-07-12T00:00:00Z" },
+      ],
+    });
+    render(<LedgerAccountView />);
+    await userEvent.type(screen.getByLabelText("Ledger account id"), "acct-c");
+    await userEvent.click(screen.getByRole("button", { name: /look up/i }));
+
+    const table = await screen.findByRole("table", { name: /ledger entries/i });
+    const shown = within(table)
+      .getAllByText(/^\$[\d,]+\.\d{2}$/)
+      .map((n) => n.textContent);
+    expect(shown).toContain("$10.00");
+    expect(shown).toContain("$7.00");
+    expect(shown).toContain("$9.00");
+  });
+
+  it("walks the running balance in the correct direction for a debit-normal (platform_cash) account over multiple rows", async () => {
+    // platform_cash is DEBIT-normal (balance grows with debits). Anchor at
+    // the current $10.00 balance and walk older, subtracting debit - credit:
+    //   row 3 (newest, debit $3): after = $10.00, running = 10 - 3 = 7
+    //   row 2 (credit $2):        after = $7.00,  running = 7 - (-2) = 9
+    //   row 1 (oldest, debit $4): after = $9.00,  running = 9 - 4 = 5
+    // A credit-normal walk would move balances the wrong way; this test
+    // pins the debit-normal sign so a regression is caught immediately.
+    getLedgerAccount.mockResolvedValue({
+      id: "acct-d",
+      kind: "platform_cash",
+      balance_cents: 1000,
+      currency: "USD",
+      entries: [
+        { debit_cents: 400, transaction_id: "d-1", created_at: "2026-07-10T00:00:00Z" },
+        { credit_cents: 200, transaction_id: "d-2", created_at: "2026-07-11T00:00:00Z" },
+        { debit_cents: 300, transaction_id: "d-3", created_at: "2026-07-12T00:00:00Z" },
+      ],
+    });
+    render(<LedgerAccountView />);
+    await userEvent.type(screen.getByLabelText("Ledger account id"), "acct-d");
+    await userEvent.click(screen.getByRole("button", { name: /look up/i }));
+
+    const table = await screen.findByRole("table", { name: /ledger entries/i });
+    const shown = within(table)
+      .getAllByText(/^\$[\d,]+\.\d{2}$/)
+      .map((n) => n.textContent);
+    expect(shown).toContain("$10.00");
+    expect(shown).toContain("$7.00");
+    expect(shown).toContain("$9.00");
+  });
+
+  it("shows an empty state when the account has no ledger entries", async () => {
+    getLedgerAccount.mockResolvedValue({
+      id: "acct-empty",
+      kind: "user_wallet",
+      owner_user_id: "u-0",
+      balance_cents: 0,
+      currency: "USD",
+      entries: [],
+    });
+    render(<LedgerAccountView />);
+    await userEvent.type(screen.getByLabelText("Ledger account id"), "acct-empty");
+    await userEvent.click(screen.getByRole("button", { name: /look up/i }));
+
+    expect(
+      await screen.findByText(/this account has no ledger entries/i),
+    ).toBeInTheDocument();
+    // No ledger table when there are no entries.
+    expect(screen.queryByRole("table", { name: /ledger entries/i })).toBeNull();
+  });
+
   it("does not query until an id is entered", async () => {
     render(<LedgerAccountView />);
     expect(screen.getByRole("button", { name: /look up/i })).toBeDisabled();
