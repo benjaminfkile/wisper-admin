@@ -43,14 +43,14 @@ describe("OverviewDashboard", () => {
     expect(screen.getByText("Health: ok")).toBeInTheDocument();
   });
 
-  it("renders dashes instead of crashing when numeric fields are missing", async () => {
+  it("renders placeholders instead of crashing when numeric fields are missing", async () => {
     // Contract drift: a partial body must not throw (the original crash bug).
     getOverview.mockResolvedValue({ currency: "usd" } as AdminOverview);
     render(<OverviewDashboard />);
 
     expect(await screen.findByText("Active leases")).toBeInTheDocument();
-    // Every numeric tile falls back to an em-dash rather than "$NaN"/"NaN".
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    // Every numeric tile falls back to a placeholder rather than "$NaN"/"NaN".
+    expect(screen.getAllByText("n/a").length).toBeGreaterThan(0);
   });
 
   it("shows an error with a retry that refetches", async () => {

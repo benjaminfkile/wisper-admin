@@ -10,7 +10,7 @@ import { useAuth } from "@/lib/auth/context";
 /** Local-dev sign-in: paste an admin-scoped Wisper API key (defined in
  *  wisper-api's `Auth:ApiKeys` config map). Shown by AdminGate when Cognito is
  *  not configured. The key is entered as a password (never echoed or logged) and
- *  authorized by the backend probe in the auth gate — a bad key is rejected
+ *  authorized by the backend probe in the auth gate: a bad key is rejected
  *  here, a non-admin key lands on the not-authorized screen. */
 export default function ApiKeySignIn() {
   const { signInWithKey } = useAuth();

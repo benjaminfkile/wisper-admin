@@ -17,7 +17,7 @@ export class WisperError extends Error {
   }
 }
 
-// The admin API requires an admin-scoped credential — a Cognito JWT (admin group)
+// The admin API requires an admin-scoped credential: a Cognito JWT (admin group)
 // or a Wisper API key (`wck_…`), both sent identically as `Authorization: Bearer
 // <cred>`. The auth layer registers a getter here so the client can attach the
 // header without callers threading the credential through every request. The

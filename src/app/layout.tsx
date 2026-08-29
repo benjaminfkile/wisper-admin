@@ -9,7 +9,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Wisper Admin",
-  description: "Platform administration for Wisper — policy, pricing, moderation, payouts.",
+  description: "Platform administration for Wisper: policy, pricing, moderation, payouts.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

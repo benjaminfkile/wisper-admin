@@ -23,7 +23,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import { formatBps, formatDateTime, formatMoney, parseMoneyToMinor } from "@/lib/format";
+import { formatBps, formatDateTime, formatMoney, parseMoneyToMinor, PLACEHOLDER } from "@/lib/format";
 import type {
   AdminPolicy,
   IsolationLevel,
@@ -37,7 +37,7 @@ const ISOLATION_LEVELS: IsolationLevel[] = ["shared", "sandboxed", "vm"];
 type Form = {
   /** Required: platform take rate 0..10000 bps. */
   fee_bps: string;
-  /** Optional cents fields — entered as dollars (e.g. "10.00" → 1000 cents). */
+  /** Optional cents fields, entered as dollars (e.g. "10.00" -> 1000 cents). */
   min_topup_cents: string;
   first_topup_max_cents: string;
   new_account_max_topup_cents_per_day: string;
@@ -121,7 +121,7 @@ function parseForm(f: Form): { rules: PolicyRules } | { error: string } {
     return { error: "Platform fee must be a whole number (basis points)." };
   }
   if (feeBps < 0 || feeBps > 10000) {
-    return { error: "Platform fee must be between 0 and 10000 bps (0–100%)." };
+    return { error: "Platform fee must be between 0 and 10000 bps (0 to 100%)." };
   }
 
   const rules: PolicyRules = { fee_bps: feeBps };
@@ -270,7 +270,7 @@ export default function PolicyEditor() {
   }
 
   const feePreview = Number.isNaN(Number(form.fee_bps))
-    ? "—"
+    ? PLACEHOLDER
     : formatBps(Number(form.fee_bps));
 
   const active = policy.active ?? {};
@@ -295,7 +295,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.fee_bps}
                   onChange={(e) => set("fee_bps", e.target.value)}
-                  helperText={`Basis points — currently ${feePreview}`}
+                  helperText={`Basis points, currently ${feePreview}`}
                   slotProps={{
                     input: {
                       endAdornment: (
@@ -313,7 +313,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.min_topup_cents}
                   onChange={(e) => set("min_topup_cents", e.target.value)}
-                  helperText="Dollars — empty = no minimum"
+                  helperText="Dollars. Empty = no minimum"
                   slotProps={{
                     input: {
                       startAdornment: (
@@ -347,7 +347,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.max_ttl_seconds_cap}
                   onChange={(e) => set("max_ttl_seconds_cap", e.target.value)}
-                  helperText="Seconds — empty = no cap"
+                  helperText="Seconds. Empty = no cap"
                   slotProps={{
                     input: {
                       endAdornment: (
@@ -367,7 +367,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.first_topup_max_cents}
                   onChange={(e) => set("first_topup_max_cents", e.target.value)}
-                  helperText="Dollars — max a new account may top up first time; empty = no limit"
+                  helperText="Dollars. Max a new account may top up first time; empty = no limit"
                   slotProps={{
                     input: {
                       startAdornment: (
@@ -385,7 +385,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.new_account_window_hours}
                   onChange={(e) => set("new_account_window_hours", e.target.value)}
-                  helperText="Hours — rolling window for new-account daily limit; empty = no window"
+                  helperText="Hours. Rolling window for new-account daily limit; empty = no window"
                   slotProps={{
                     input: {
                       endAdornment: (
@@ -403,7 +403,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.new_account_max_topup_cents_per_day}
                   onChange={(e) => set("new_account_max_topup_cents_per_day", e.target.value)}
-                  helperText="Dollars — per-day top-up cap for new accounts; empty = no limit"
+                  helperText="Dollars. Per-day top-up cap for new accounts; empty = no limit"
                   slotProps={{
                     input: {
                       startAdornment: (
@@ -425,7 +425,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.max_spend_cents_per_day}
                   onChange={(e) => set("max_spend_cents_per_day", e.target.value)}
-                  helperText="Dollars — platform-wide daily spend cap; empty = no cap"
+                  helperText="Dollars. Platform-wide daily spend cap; empty = no cap"
                   slotProps={{
                     input: {
                       startAdornment: (
@@ -469,7 +469,7 @@ export default function PolicyEditor() {
                   fullWidth
                   value={form.effective_from}
                   onChange={(e) => set("effective_from", e.target.value)}
-                  helperText="ISO-8601 — leave empty to apply immediately"
+                  helperText="ISO-8601. Leave empty to apply immediately"
                   slotProps={{ htmlInput: { "aria-label": "Effective from" } }}
                 />
               </Grid>
@@ -574,15 +574,15 @@ function VersionHistory({ history }: { history?: PolicyVersion[] }) {
             <TableBody>
               {history.map((v, i) => (
                 <TableRow key={v.id ?? i}>
-                  <TableCell>{v.id ?? "—"}</TableCell>
+                  <TableCell>{v.id ?? PLACEHOLDER}</TableCell>
                   <TableCell align="right">{formatBps(v.fee_bps)}</TableCell>
                   <TableCell align="right">{formatMoney(v.min_topup_cents)}</TableCell>
                   <TableCell align="right">
-                    {v.max_concurrent_leases_per_user ?? "—"}
+                    {v.max_concurrent_leases_per_user ?? PLACEHOLDER}
                   </TableCell>
-                  <TableCell>{v.min_isolation ?? "—"}</TableCell>
+                  <TableCell>{v.min_isolation ?? PLACEHOLDER}</TableCell>
                   <TableCell>{formatDateTime(v.effective_from)}</TableCell>
-                  <TableCell>{v.created_by ?? "—"}</TableCell>
+                  <TableCell>{v.created_by ?? PLACEHOLDER}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "npm run lint:dashes && next lint",
+    "lint:dashes": "! grep -rnP '\\xE2\\x80\\x94|\\xE2\\x80\\x93' --include='*.ts' --include='*.tsx' --include='*.md' --include='*.json' --include='*.mjs' --include='*.js' --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git .",
     "test": "vitest run",
     "test:watch": "vitest"
   },

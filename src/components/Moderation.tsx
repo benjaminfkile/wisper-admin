@@ -29,7 +29,7 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import SearchIcon from "@mui/icons-material/Search";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, PLACEHOLDER } from "@/lib/format";
 import type { AdminHost, AdminUser, IsolationLevel } from "@/lib/wisper/types";
 
 type Kind = "hosts" | "users";
@@ -42,7 +42,7 @@ const PAGE = 25;
  *  before hitting the API, so typing doesn't fan out a request per character. */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** Human labels for the requestable isolation levels (weakest → strongest). */
+/** Human labels for the requestable isolation levels (weakest to strongest). */
 const ISOLATION_LABELS: Record<IsolationLevel, string> = {
   shared: "Shared kernel",
   sandboxed: "gVisor sandbox",
@@ -119,7 +119,7 @@ function StatusChip({ status }: { status?: string }) {
 }
 
 /** Read-only chips for a host's supported isolation levels, highlighting the
- *  host's default. Renders a dash when the API reports no levels. */
+ *  host's default. Renders a placeholder when the API reports no levels. */
 function IsolationChips({
   levels,
   defaultLevel,
@@ -128,7 +128,7 @@ function IsolationChips({
   defaultLevel?: IsolationLevel;
 }) {
   if (!levels || levels.length === 0) {
-    return <Typography color="text.secondary">—</Typography>;
+    return <Typography color="text.secondary">{PLACEHOLDER}</Typography>;
   }
   return (
     <Stack direction="row" spacing={0.5} sx={{ flexWrap: "wrap", gap: 0.5 }}>
@@ -459,7 +459,7 @@ function HostsPanel() {
                   </Typography>
                 </TableCell>
                 <TableCell sx={{ wordBreak: "break-all" }}>
-                  {h.owner_user_id || "—"}
+                  {h.owner_user_id || PLACEHOLDER}
                 </TableCell>
                 <TableCell>
                   <StatusChip status={h.status} />
@@ -667,7 +667,7 @@ function UsersPanel() {
                 <TableCell>
                   <StatusChip status={u.status} />
                 </TableCell>
-                <TableCell>{u.connect_status || "—"}</TableCell>
+                <TableCell>{u.connect_status || PLACEHOLDER}</TableCell>
                 <TableCell>
                   <BoolChip value={u.has_stripe_customer} />
                 </TableCell>
