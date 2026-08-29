@@ -92,8 +92,8 @@ export default function OverviewDashboard() {
 
 function OverviewGrid({ data }: { data: AdminOverview }) {
   // Real /v1/admin/overview keys (live-verified 2026-07-20). Every value goes
-  // through formatMoney/formatNumber, which render a dash for a missing/NaN
-  // field — so a drifted or partial response never crashes a tile.
+  // through formatMoney/formatNumber, which render a placeholder for a
+  // missing/NaN field, so a drifted or partial response never crashes a tile.
   const currency = data.currency;
   const tiles = [
     {

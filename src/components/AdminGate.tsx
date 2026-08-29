@@ -73,7 +73,7 @@ export default function AdminGate({ children }: { children: ReactNode }) {
   if (status === "unauthenticated") {
     // With Cognito configured, the Hosted-UI flow is unchanged. Without it (local
     // dev), the Hosted-UI button would produce no URL, so offer the paste-a-key
-    // form instead — an admin-scoped key from wisper-api's Auth:ApiKeys config map.
+    // form instead: an admin-scoped key from wisper-api's Auth:ApiKeys config map.
     if (!isCognitoConfigured()) {
       return (
         <CenteredMessage

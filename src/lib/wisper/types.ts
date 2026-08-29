@@ -5,7 +5,7 @@
 // CONTRACT AUTHORITY
 // ---------------------------------------------------------------------------
 // The admin surface below was LIVE-VERIFIED against a running wisper-api on
-// 2026-07-20 (the first time this app ran against a real API — the API-key
+// 2026-07-20 (the first time this app ran against a real API, the API-key
 // sign-in made it possible). Before then the shapes were guesses and had never
 // been exercised; that drift crashed the overview and emptied the moderation /
 // audit / policy lists. The AUTHORITATIVE contract is wisper-api's docs/API.md;
@@ -24,8 +24,8 @@
 //
 // Every collection is unwrapped tolerantly at the client boundary (admin.ts):
 // a missing/misshaped envelope degrades to an empty list and numeric fields are
-// optional, so a component never crashes on further shape drift — it renders a
-// dash. When in doubt, docs/API.md wins over these declarations.
+// optional, so a component never crashes on further shape drift; it renders a
+// placeholder. When in doubt, docs/API.md wins over these declarations.
 // ---------------------------------------------------------------------------
 
 /** Liveness (docs/API.md §4). */
@@ -76,9 +76,9 @@ export type AdminHealth =
   | { status?: string; [key: string]: unknown }
   | null;
 
-/** GET /v1/admin/overview — platform snapshot for the dashboard (real keys,
+/** GET /v1/admin/overview: platform snapshot for the dashboard (real keys,
  *  live-verified 2026-07-20). All numerics optional: a missing field renders a
- *  dash rather than crashing the tile. */
+ *  placeholder rather than crashing the tile. */
 export interface AdminOverview {
   /** ISO currency code for the *_cents amounts below. */
   currency?: string;
@@ -99,7 +99,7 @@ export interface AdminOverview {
   health?: AdminHealth;
 }
 
-/** The editable policy fields (PUT /v1/admin/policy body — PolicyUpdateRequest).
+/** The editable policy fields (PUT /v1/admin/policy body, PolicyUpdateRequest).
  *  Only `fee_bps` is required; all others are optional (omit = unlimited/none).
  *  Amounts in cents (`*_cents`) must be sent as integer minor units. */
 export interface PolicyRules {
@@ -137,7 +137,7 @@ export interface PolicyVersion extends Partial<PolicyRules> {
   /** effective_from is inherited from Partial<PolicyRules>. */
 }
 
-/** GET /v1/admin/policy — the active policy plus its version history.
+/** GET /v1/admin/policy: the active policy plus its version history.
  *  Live-verified envelope (2026-07-20): `{ active, versions }`. */
 export interface AdminPolicy {
   /** The current/active policy revision. */
@@ -220,10 +220,10 @@ export interface SuspendRequest {
   reason: string;
 }
 
-/** POST /v1/admin/refunds — refund a consumer.
+/** POST /v1/admin/refunds: refund a consumer.
  *  `payment_intent` is optional; when provided it ties the refund to the
  *  specific Stripe PaymentIntent so the platform can reconcile it. The API
- *  does NOT accept `lease_id` — drop that field entirely. */
+ *  does NOT accept `lease_id`; drop that field entirely. */
 export interface RefundRequest {
   user_id: string;
   /** Optional Stripe PaymentIntent id to tie the refund to a specific charge. */
@@ -233,7 +233,7 @@ export interface RefundRequest {
   reason: string;
 }
 
-/** POST /v1/admin/adjustments — manual double-entry ledger transfer.
+/** POST /v1/admin/adjustments: manual double-entry ledger transfer.
  *  The API uses a two-legged model: money moves from `debit_account_id` to
  *  `credit_account_id` by `amount_cents` (always positive). To credit a user
  *  account the UI maps the user account → credit leg and the platform clearing

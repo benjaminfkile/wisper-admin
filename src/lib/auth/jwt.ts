@@ -1,6 +1,6 @@
 // Cognito JWT helpers. The admin app decodes the ID token client-side only to
 // drive UX (which screen to show, whose name in the AppBar). It never trusts the
-// decode for security — the Wisper API independently verifies the token's
+// decode for security; the Wisper API independently verifies the token's
 // signature and the `admin` group membership on every /v1/admin call.
 
 /** The Cognito group that grants access to this admin app. */

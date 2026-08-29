@@ -37,7 +37,7 @@ function renderApp() {
 
 const status = () => screen.getByTestId("status").textContent;
 
-describe("AuthProvider — API key sign-in", () => {
+describe("AuthProvider: API key sign-in", () => {
   beforeEach(() => {
     getOverview.mockReset();
     window.localStorage.clear();

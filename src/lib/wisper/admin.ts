@@ -7,7 +7,7 @@
 // Responses are unwrapped TOLERANTLY here: list endpoints return a
 // `{ data, next_offset|next_cursor }` envelope, so we pull `data` defensively
 // (a missing/misshaped envelope degrades to an empty list) and normalize items
-// with alternative field names. That keeps components from crashing on drift —
+// with alternative field names. That keeps components from crashing on drift,
 // the whole reason this reconciliation exists.
 import { request } from "./client";
 import type {
@@ -89,13 +89,13 @@ function normalizeAudit(raw: unknown): AuditEntry {
 
 /** The admin API surface, grouped by resource. */
 export const admin = {
-  /** GET /v1/admin/overview — platform snapshot for the dashboard. Degrades a
+  /** GET /v1/admin/overview: platform snapshot for the dashboard. Degrades a
    *  null/empty body to `{}` so callers always get an object. */
   getOverview(): Promise<AdminOverview> {
     return request<AdminOverview>(`${V1}/overview`).then((r) => r ?? {});
   },
 
-  /** GET /v1/admin/policy — the active policy plus its version history
+  /** GET /v1/admin/policy: the active policy plus its version history
    *  (`{ active, versions }`). Normalizes to always-present fields. */
   getPolicy(): Promise<AdminPolicy> {
     return request<AdminPolicy>(`${V1}/policy`).then((r) => ({
@@ -104,7 +104,7 @@ export const admin = {
     }));
   },
 
-  /** PUT /v1/admin/policy — replace the policy & pricing rules. Send only the
+  /** PUT /v1/admin/policy: replace the policy & pricing rules. Send only the
    *  editable fields; the server assigns the new version and returns the bare
    *  {@link PolicyVersion} (PolicyView), NOT the `{ active, versions }`
    *  envelope. Callers that need the full envelope (id chip, effective
@@ -145,7 +145,7 @@ export const admin = {
     );
   },
 
-  /** POST /v1/admin/hosts/:id/suspend — suspend a host. */
+  /** POST /v1/admin/hosts/:id/suspend: suspend a host. */
   suspendHost(id: string, reason: string): Promise<AdminHost> {
     const body: SuspendRequest = { reason };
     return request<AdminHost>(`${V1}/hosts/${encodeURIComponent(id)}/suspend`, {
@@ -154,14 +154,14 @@ export const admin = {
     });
   },
 
-  /** POST /v1/admin/hosts/:id/unsuspend — lift a host suspension. */
+  /** POST /v1/admin/hosts/:id/unsuspend: lift a host suspension. */
   unsuspendHost(id: string): Promise<AdminHost> {
     return request<AdminHost>(`${V1}/hosts/${encodeURIComponent(id)}/unsuspend`, {
       method: "POST",
     });
   },
 
-  /** POST /v1/admin/users/:id/suspend — suspend a consumer account. */
+  /** POST /v1/admin/users/:id/suspend: suspend a consumer account. */
   suspendUser(id: string, reason: string): Promise<AdminUser> {
     const body: SuspendRequest = { reason };
     return request<AdminUser>(`${V1}/users/${encodeURIComponent(id)}/suspend`, {
@@ -170,7 +170,7 @@ export const admin = {
     });
   },
 
-  /** POST /v1/admin/users/:id/unsuspend — lift a consumer suspension. */
+  /** POST /v1/admin/users/:id/unsuspend: lift a consumer suspension. */
   unsuspendUser(id: string): Promise<AdminUser> {
     return request<AdminUser>(`${V1}/users/${encodeURIComponent(id)}/unsuspend`, {
       method: "POST",
@@ -195,7 +195,7 @@ export const admin = {
     });
   },
 
-  /** POST /v1/admin/adjustments — manual ledger credit/debit. Idempotency-Key
+  /** POST /v1/admin/adjustments: manual ledger credit/debit. Idempotency-Key
    *  guards against double-posting a manual entry on a retry. */
   createAdjustment(
     body: AdjustmentRequest,
@@ -208,7 +208,7 @@ export const admin = {
     });
   },
 
-  /** GET /v1/admin/audit — paginated audit log (`{ data, next_cursor }`). Rows
+  /** GET /v1/admin/audit: paginated audit log (`{ data, next_cursor }`). Rows
    *  are normalized tolerantly so the log renders whatever fields the API sends. */
   getAudit(query: AuditQuery = {}): Promise<AuditList> {
     return request<AuditList>(`${V1}/audit${encode({ ...query })}`).then((r) => ({
@@ -217,7 +217,7 @@ export const admin = {
     }));
   },
 
-  /** GET /v1/admin/ledger/accounts/:id — a ledger account with recent entries.
+  /** GET /v1/admin/ledger/accounts/:id: a ledger account with recent entries.
    *  Wire envelope is `{ account, entries }`; we flatten so callers see a
    *  single object (account fields plus `entries`). `entries` degrades to `[]`
    *  when omitted so the view never crashes on a missing list. */

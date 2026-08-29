@@ -4,12 +4,12 @@
 //
 //   • A Cognito id-token is a JWT, so `resolveAuth` (jwt.ts) can decode it
 //     client-side and read `cognito:groups` for admin. That decode is a UX
-//     FAST-PATH ONLY — it lets the gate pick a screen without a round-trip. The
+//     FAST-PATH ONLY: it lets the gate pick a screen without a round-trip. The
 //     Wisper API still re-verifies the token's signature and group on every
 //     /v1/admin call, so security never depends on the decode.
 //
 //   • A Wisper API key (`wck_` prefix) has no JWT payload to decode, so there is
-//     nothing to approximate: authorization is resolved by ASKING THE BACKEND —
+//     nothing to approximate: authorization is resolved by ASKING THE BACKEND,
 //     the authoritative check. We probe the cheapest admin read
 //     (GET /v1/admin/overview) with the key as the bearer and map the outcome:
 //       200 -> authenticated admin
@@ -22,7 +22,7 @@ import { WisperError } from "@/lib/wisper/client";
 import { resolveAuth, type AuthState, type AuthUser } from "./jwt";
 import { isApiKey } from "./storage";
 
-/** Synthetic identity for an API-key session — there is no JWT to distill a real
+/** Synthetic identity for an API-key session: there is no JWT to distill a real
  *  user from. The backend probe is what actually authorized it. */
 const API_KEY_USER: AuthUser = {
   sub: "",
