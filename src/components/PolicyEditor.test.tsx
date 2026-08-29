@@ -65,12 +65,15 @@ describe("PolicyEditor", () => {
   it("saves edits via updatePolicy with correct field names and sends cents", async () => {
     getPolicy.mockResolvedValue(POLICY);
     // After save: min_topup_cents updated to 2000 (= $20), version id bumped.
+    // PUT returns the bare PolicyView (not { active, versions }); the editor
+    // re-reads GET to refresh the id chip and history.
     const savedActive: PolicyVersion = {
       ...ACTIVE,
       id: "pol-4",
       min_topup_cents: 2000,
     };
-    updatePolicy.mockResolvedValue({
+    updatePolicy.mockResolvedValue(savedActive);
+    getPolicy.mockResolvedValueOnce(POLICY).mockResolvedValueOnce({
       active: savedActive,
       versions: [savedActive, ACTIVE, V2],
     });
@@ -92,16 +95,18 @@ describe("PolicyEditor", () => {
   });
 
   it("loads the current isolation floor and saves a changed floor", async () => {
-    getPolicy.mockResolvedValue({
+    const withFloor: AdminPolicy = {
       active: { ...ACTIVE, min_isolation: "shared" },
       versions: [{ ...ACTIVE, min_isolation: "shared" }, V2],
-    });
+    };
+    getPolicy.mockResolvedValueOnce(withFloor);
     const savedActive: PolicyVersion = {
       ...ACTIVE,
       id: "pol-4",
       min_isolation: "vm",
     };
-    updatePolicy.mockResolvedValue({
+    updatePolicy.mockResolvedValue(savedActive);
+    getPolicy.mockResolvedValueOnce({
       active: savedActive,
       versions: [savedActive, ACTIVE, V2],
     });
@@ -132,7 +137,7 @@ describe("PolicyEditor", () => {
       active: { ...ACTIVE, min_isolation: "sandboxed" },
       versions: [{ ...ACTIVE, min_isolation: "sandboxed" }, V2],
     });
-    updatePolicy.mockResolvedValue(POLICY);
+    updatePolicy.mockResolvedValue(ACTIVE);
     render(<PolicyEditor />);
 
     const floor = await screen.findByLabelText("Minimum isolation floor");
@@ -167,7 +172,7 @@ describe("PolicyEditor", () => {
 
   it("sends fee_bps as an integer (not the stale platform_fee_bps key)", async () => {
     getPolicy.mockResolvedValue(POLICY);
-    updatePolicy.mockResolvedValue(POLICY);
+    updatePolicy.mockResolvedValue(ACTIVE);
     render(<PolicyEditor />);
 
     // Change any field to make the form dirty.
@@ -205,6 +210,97 @@ describe("PolicyEditor", () => {
     // The version-history "Signups" column is also gone.
     const table = screen.getByRole("table", { name: /policy version history/i });
     expect(within(table).queryByText(/signups/i)).toBeNull();
+  });
+
+  it("does not send effective_from when the admin didn't touch the field", async () => {
+    // wisper-api picks the active version by ORDER BY effective_from DESC and
+    // only defaults effective_from to now() when it is ABSENT on the PUT body.
+    // Echoing the active version's timestamp ties the new revision and leaves
+    // the old policy active, so the editor MUST omit the key entirely unless
+    // the admin explicitly typed a new value.
+    getPolicy.mockResolvedValue(POLICY);
+    updatePolicy.mockResolvedValue(ACTIVE);
+    render(<PolicyEditor />);
+
+    // Change a different field to make the form dirty.
+    const fee = await screen.findByLabelText("Platform fee");
+    await userEvent.clear(fee);
+    await userEvent.type(fee, "600");
+
+    // The datetime-local input renders blank even though the loaded active
+    // revision carries a full DateTimeOffset in effective_from.
+    expect(screen.getByLabelText("Effective from")).toHaveValue("");
+
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(updatePolicy).toHaveBeenCalledTimes(1));
+    const payload = updatePolicy.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("effective_from");
+  });
+
+  it("sends an entered datetime-local value as an ISO 8601 string with timezone", async () => {
+    getPolicy.mockResolvedValue(POLICY);
+    updatePolicy.mockResolvedValue(ACTIVE);
+    render(<PolicyEditor />);
+
+    const eff = await screen.findByLabelText("Effective from");
+    // datetime-local yields "YYYY-MM-DDTHH:MM" (no timezone).
+    await userEvent.type(eff, "2026-12-31T09:30");
+
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(updatePolicy).toHaveBeenCalledTimes(1));
+    const payload = updatePolicy.mock.calls[0][0] as { effective_from?: string };
+    expect(typeof payload.effective_from).toBe("string");
+    // Must serialize to an ISO 8601 timestamp with a timezone designator (Z or
+    // an explicit +HH:MM/-HH:MM offset). The local-time input is interpreted
+    // in the runner's timezone, so the exact wall-clock value depends on TZ;
+    // the shape check is the invariant.
+    expect(payload.effective_from).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/,
+    );
+    expect(new Date(payload.effective_from!).getTime()).toBe(
+      new Date("2026-12-31T09:30").getTime(),
+    );
+  });
+
+  it("re-reads GET /v1/admin/policy after a save and shows the new active version and history", async () => {
+    // PUT /v1/admin/policy returns a bare PolicyView (no { active, versions }
+    // envelope). The editor must call GET afterwards or the id chip,
+    // effective header and history table would vanish.
+    getPolicy.mockResolvedValueOnce(POLICY);
+    const savedActive: PolicyVersion = {
+      ...ACTIVE,
+      id: "pol-4",
+      fee_bps: 750,
+      effective_from: "2026-08-30T00:00:00Z",
+      created_by: "admin@wisper.dev",
+    };
+    updatePolicy.mockResolvedValue(savedActive);
+    getPolicy.mockResolvedValueOnce({
+      active: savedActive,
+      versions: [savedActive, ACTIVE, V2],
+    });
+
+    render(<PolicyEditor />);
+
+    const fee = await screen.findByLabelText("Platform fee");
+    await userEvent.clear(fee);
+    await userEvent.type(fee, "750");
+    await userEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    await waitFor(() => expect(updatePolicy).toHaveBeenCalledTimes(1));
+    // GET is called once at load and once again after the save.
+    await waitFor(() => expect(getPolicy).toHaveBeenCalledTimes(2));
+
+    // The new active version's id chip is now visible (appears in the header
+    // chip AND the history-table row).
+    expect((await screen.findAllByText("pol-4")).length).toBeGreaterThan(0);
+    // The history table renders the new revision plus prior ones.
+    const table = screen.getByRole("table", { name: /policy version history/i });
+    expect(within(table).getByText("pol-4")).toBeInTheDocument();
+    expect(within(table).getByText("pol-3")).toBeInTheDocument();
+    expect(within(table).getByText("pol-2")).toBeInTheDocument();
   });
 
   it("surfaces a load error with a retry", async () => {
