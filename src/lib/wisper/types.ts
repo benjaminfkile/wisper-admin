@@ -351,9 +351,11 @@ export interface LedgerAccountList {
 }
 
 /** Query params for GET /v1/admin/ledger/accounts. `kind` narrows to one
- *  account kind (e.g. "user_wallet"); `owner_user_id` restricts to the
- *  accounts owned by that user (required by the API for owner-scoped kinds
- *  like user_wallet / host_earnings). */
+ *  account kind (e.g. "user_wallet"); `owner_user_id` is an OPTIONAL narrowing
+ *  that restricts to the accounts owned by that user. The API accepts a
+ *  `kind`-only query even for owner-scoped kinds like user_wallet /
+ *  host_earnings (it returns every account of that kind, paged), so the owner
+ *  filter is only used when the operator wants to zero in on a specific user. */
 export interface LedgerAccountListQuery {
   kind?: string;
   owner_user_id?: string;

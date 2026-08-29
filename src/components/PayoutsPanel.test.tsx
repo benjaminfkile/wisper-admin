@@ -470,14 +470,18 @@ describe("PayoutsPanel", () => {
   it("picks a user wallet by owner email and fills the credit id", async () => {
     // user_wallet is owner-scoped: the operator types an owner (email or user
     // id); the picker resolves the email via listUsers and then queries
-    // listLedgerAccounts with kind=user_wallet + owner_user_id.
+    // listLedgerAccounts with kind=user_wallet + owner_user_id. A single-hit
+    // email lookup auto-selects the match rather than showing a chooser.
+    // Selecting the kind fires an initial browse (no owner_user_id) which
+    // then re-fires once the resolver settles on the single user, so
+    // listLedgerAccounts is stubbed for both calls.
     const OWNER_ID = "u-42";
     const WALLET_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     listUsers.mockResolvedValueOnce({
       data: [{ id: OWNER_ID, email: "dana@example.com", status: "active" }],
       next_offset: null,
     });
-    listLedgerAccounts.mockResolvedValueOnce({
+    listLedgerAccounts.mockResolvedValue({
       data: [
         {
           id: WALLET_ID,
@@ -508,10 +512,12 @@ describe("PayoutsPanel", () => {
     );
     await userEvent.type(ownerField, "dana@example.com");
 
-    // The email resolves to the owner id via listUsers.
+    // The email resolves to the owner id via listUsers. The picker fetches a
+    // small page (limit 10) so a partial email can surface every match rather
+    // than silently taking the first row.
     await waitFor(() =>
       expect(listUsers).toHaveBeenCalledWith(
-        expect.objectContaining({ query: "dana@example.com" }),
+        expect.objectContaining({ query: "dana@example.com", limit: 10 }),
       ),
     );
 
@@ -531,6 +537,169 @@ describe("PayoutsPanel", () => {
       }),
     );
 
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      (screen.getByLabelText("Adjustment credit account id") as HTMLInputElement)
+        .value,
+    ).toBe(WALLET_ID);
+  });
+
+  it("browses every wallet when kind=user_wallet is picked without an owner filter", async () => {
+    // The API accepts a kind-only query even for owner-scoped kinds: it
+    // returns every account of that kind, paged. The picker leaves the owner
+    // field blank and fires listLedgerAccounts with no owner_user_id, so an
+    // operator without an owner in hand can browse the full list.
+    const WALLET_A = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    const WALLET_B = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    listLedgerAccounts.mockResolvedValueOnce({
+      data: [
+        {
+          id: WALLET_A,
+          kind: "user_wallet",
+          owner_user_id: "u-1",
+          owner_email: "a@example.com",
+          currency: "USD",
+          balance_cents: 100,
+        },
+        {
+          id: WALLET_B,
+          kind: "user_wallet",
+          owner_user_id: "u-2",
+          owner_email: "b@example.com",
+          currency: "USD",
+          balance_cents: 200,
+        },
+      ],
+      next_offset: null,
+    });
+    render(<PayoutsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /pick debit account/i }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByLabelText(/picker account kind/i));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "user_wallet" }),
+    );
+
+    // No owner text was entered, but the accounts query fires anyway with
+    // just the kind. The list surfaces every wallet for the operator to
+    // choose from, and no listUsers lookup was made.
+    await waitFor(() =>
+      expect(listLedgerAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "user_wallet", limit: 25, offset: 0 }),
+      ),
+    );
+    const [call] = listLedgerAccounts.mock.calls;
+    expect(call[0].owner_user_id).toBeUndefined();
+    expect(listUsers).not.toHaveBeenCalled();
+
+    // Rows for both wallets are rendered.
+    expect(
+      await within(dialog).findByRole("button", { name: `Use account ${WALLET_A}` }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: `Use account ${WALLET_B}` }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows every match when an email substring resolves to more than one user", async () => {
+    // Prior behavior called /v1/admin/users?query=&limit=1 and silently took
+    // the first row, so a partial email like "dana@" picked one arbitrary
+    // user. The picker now fetches a small page and, when more than one row
+    // matches, surfaces every hit as a chooser (email + id) so the operator
+    // picks the intended owner. Clicking one narrows the accounts query.
+    const FIRST_ID = "10000000-0000-0000-0000-000000000001";
+    const SECOND_ID = "20000000-0000-0000-0000-000000000002";
+    const WALLET_ID = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    listUsers.mockResolvedValueOnce({
+      data: [
+        { id: FIRST_ID, email: "dana.alpha@example.com", status: "active" },
+        { id: SECOND_ID, email: "dana.beta@example.com", status: "active" },
+      ],
+      next_offset: null,
+    });
+    listLedgerAccounts.mockResolvedValue({
+      data: [
+        {
+          id: WALLET_ID,
+          kind: "user_wallet",
+          owner_user_id: SECOND_ID,
+          owner_email: "dana.beta@example.com",
+          currency: "USD",
+          balance_cents: 4200,
+        },
+      ],
+      next_offset: null,
+    });
+    render(<PayoutsPanel />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /pick credit account/i }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByLabelText(/picker account kind/i));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "user_wallet" }),
+    );
+
+    const ownerField = await within(dialog).findByLabelText(
+      /picker owner email or user id/i,
+    );
+    await userEvent.type(ownerField, "dana@");
+
+    await waitFor(() =>
+      expect(listUsers).toHaveBeenCalledWith(
+        expect.objectContaining({ query: "dana@", limit: 10 }),
+      ),
+    );
+
+    // Both matches render in the chooser (email + id visible for each).
+    const chooser = await within(dialog).findByRole("table", {
+      name: /owner match candidates/i,
+    });
+    expect(within(chooser).getByText("dana.alpha@example.com")).toBeInTheDocument();
+    expect(within(chooser).getByText(FIRST_ID)).toBeInTheDocument();
+    expect(within(chooser).getByText("dana.beta@example.com")).toBeInTheDocument();
+    expect(within(chooser).getByText(SECOND_ID)).toBeInTheDocument();
+
+    // Any accounts calls fired so far are for browsing (no owner filter);
+    // none should carry the ambiguous email as an owner. The narrowed call
+    // only fires once the operator picks one of the candidates.
+    for (const [call] of listLedgerAccounts.mock.calls) {
+      expect(call.owner_user_id).toBeUndefined();
+    }
+    const callsBeforePick = listLedgerAccounts.mock.calls.length;
+
+    // Pick the second candidate: the owner field snaps to that user's id
+    // (which then passes through the resolver as a UUID), and the accounts
+    // query fires narrowed to that owner.
+    await userEvent.click(
+      within(chooser).getByRole("button", {
+        name: /use owner dana\.beta@example\.com/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(listLedgerAccounts.mock.calls.length).toBeGreaterThan(
+        callsBeforePick,
+      );
+      expect(listLedgerAccounts).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          kind: "user_wallet",
+          owner_user_id: SECOND_ID,
+        }),
+      );
+    });
+
+    await userEvent.click(
+      await within(dialog).findByRole("button", {
+        name: `Use account ${WALLET_ID}`,
+      }),
+    );
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
