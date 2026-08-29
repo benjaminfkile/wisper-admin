@@ -71,22 +71,16 @@ export default function PayoutsPanel() {
   );
 }
 
-/** Success confirmation for the refund form. The RefundResponse describes the
- *  refund itself (id, amount, status, and the Stripe anchor), not a ledger
- *  transaction, so this note reports only those fields. */
+/** Success confirmation for the refund form. The RefundResponse carries the
+ *  refund id, the refunded amount, the currency, and the wallet's balance
+ *  after the refund, so the note reports only those fields. */
 function RefundResultNote({ result }: { result: RefundResponse }) {
   return (
     <Alert severity="success" sx={{ mt: 2 }}>
-      Refund <code>{result.refund_id}</code> {result.status || "recorded"}:{" "}
-      <strong>{formatMoney(result.amount_cents, result.currency)}</strong> to{" "}
-      <code>{result.user_id}</code>
-      {result.payment_intent ? (
-        <>
-          {" "}
-          against payment intent <code>{result.payment_intent}</code>
-        </>
-      ) : null}
-      .
+      Refund <code>{result.refund_id}</code>:{" "}
+      <strong>{formatMoney(result.amount_cents, result.currency)}</strong>{" "}
+      refunded; remaining wallet balance{" "}
+      <strong>{formatMoney(result.balance_cents, result.currency)}</strong>.
     </Alert>
   );
 }

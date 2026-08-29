@@ -177,12 +177,13 @@ export const admin = {
     });
   },
 
-  /** POST /v1/admin/refunds: refund a consumer against a Stripe charge.
+  /** POST /v1/admin/refunds: refund unspent wallet credits against a top-up.
    *  Money-moving, so it carries an Idempotency-Key: retrying with the same
    *  key is safe and returns the original refund rather than duplicating it.
-   *  The response is {@link RefundResponse} (the refund itself); it does NOT
-   *  carry the ledger-transaction fields. Those show up separately in the
-   *  ledger forensics view. */
+   *  The response is {@link RefundResponse} (refund id, amount refunded,
+   *  currency, and the wallet balance after the refund); it does NOT carry
+   *  the ledger-transaction fields. Those show up separately in the ledger
+   *  forensics view. */
   createRefund(
     body: RefundRequest,
     idempotencyKey: string,

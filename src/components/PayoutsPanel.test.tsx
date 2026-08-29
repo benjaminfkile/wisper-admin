@@ -54,15 +54,16 @@ const RESULT: LedgerMutationResult = {
 };
 
 // RefundResponse (used for the refund tests). Distinct from the ledger
-// adjustment response: the refund envelope carries the refund's own fields
-// (refund_id / user_id / amount / status / optional payment_intent) and has
-// no transaction_id, debit_account_id, or credit_account_id.
+// adjustment response: the refund envelope is exactly { refund_id,
+// amount_cents, currency, balance_cents }: the refund id, the amount that
+// came off the wallet, the currency, and the wallet's new balance after the
+// refund. It has no user_id, status, payment_intent, transaction_id,
+// debit_account_id, or credit_account_id.
 const REFUND: RefundResponse = {
   refund_id: "rfnd_1",
-  user_id: "u-1",
   amount_cents: 1250,
   currency: "USD",
-  status: "succeeded",
+  balance_cents: 3750,
 };
 
 /** Wire the account-preview mock so each UUID resolves to its fixture; other
@@ -101,27 +102,50 @@ describe("PayoutsPanel", () => {
     expect(typeof key).toBe("string");
     expect((key as string).length).toBeGreaterThan(0);
     // The success note reads the RefundResponse's actual fields: refund_id,
-    // amount, status, and the user id. It does NOT print ledger fields the
-    // API does not return on this envelope (transaction_id / debit_account_id
-    // / credit_account_id).
+    // amount_cents, currency, balance_cents. It renders the refund id, the
+    // amount refunded, and the wallet's remaining balance, and nothing else
+    // (no user id, status, payment intent, or ledger-transaction field).
     const note = (await screen.findByText(/rfnd_1/)).closest(
       "[role='alert']",
     ) as HTMLElement;
     expect(note).not.toBeNull();
-    expect(within(note).getByText(/succeeded/)).toBeInTheDocument();
     expect(within(note).getByText(/\$12\.50/)).toBeInTheDocument();
-    expect(within(note).getByText(/u-1/)).toBeInTheDocument();
-    // Nothing on the note describes a double-entry transaction.
+    expect(within(note).getByText(/remaining wallet balance/i)).toBeInTheDocument();
+    expect(within(note).getByText(/\$37\.50/)).toBeInTheDocument();
+    // Nothing on the note describes fields the RefundResponse does not carry.
+    expect(within(note).queryByText(/u-1/)).not.toBeInTheDocument();
+    expect(within(note).queryByText(/succeeded/i)).not.toBeInTheDocument();
+    expect(within(note).queryByText(/payment intent/i)).not.toBeInTheDocument();
     expect(within(note).queryByText(/txn-/)).not.toBeInTheDocument();
     expect(within(note).queryByText(/debit/i)).not.toBeInTheDocument();
     expect(within(note).queryByText(/credit/i)).not.toBeInTheDocument();
   });
 
-  it("shows the payment intent on the refund success note when provided", async () => {
+  it("formats the refund note in the currency the server returned (currency-aware)", async () => {
     createRefund.mockResolvedValue({
-      ...REFUND,
-      payment_intent: "pi_abc123",
+      refund_id: "rfnd_eur",
+      amount_cents: 500,
+      currency: "EUR",
+      balance_cents: 1500,
     });
+    render(<PayoutsPanel />);
+
+    await userEvent.type(screen.getByLabelText("Refund consumer id"), "u-1");
+    await userEvent.type(screen.getByLabelText("Refund amount"), "5");
+    await userEvent.type(screen.getByLabelText("Refund reason"), "goodwill");
+    await userEvent.click(screen.getByRole("button", { name: /issue refund/i }));
+
+    const note = (await screen.findByText(/rfnd_eur/)).closest(
+      "[role='alert']",
+    ) as HTMLElement;
+    expect(note).not.toBeNull();
+    // Intl.NumberFormat en-US formats EUR as "€5.00" / "€15.00".
+    expect(within(note).getByText(/€5\.00/)).toBeInTheDocument();
+    expect(within(note).getByText(/€15\.00/)).toBeInTheDocument();
+  });
+
+  it("sends the payment intent to the API when the operator provides one", async () => {
+    createRefund.mockResolvedValue(REFUND);
     render(<PayoutsPanel />);
 
     await userEvent.type(screen.getByLabelText("Refund consumer id"), "u-1");
@@ -130,7 +154,9 @@ describe("PayoutsPanel", () => {
     await userEvent.type(screen.getByLabelText("Refund reason"), "service outage");
     await userEvent.click(screen.getByRole("button", { name: /issue refund/i }));
 
-    expect(await screen.findByText(/pi_abc123/)).toBeInTheDocument();
+    await waitFor(() => expect(createRefund).toHaveBeenCalledTimes(1));
+    const [body] = createRefund.mock.calls[0];
+    expect(body.payment_intent).toBe("pi_abc123");
   });
 
   it("reuses the same idempotency key when a refund retries after failure", async () => {
