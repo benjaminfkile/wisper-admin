@@ -63,7 +63,14 @@ function centsToDisplay(cents: number | undefined | null): string {
   return String(cents / 100);
 }
 
-/** Build the editable form from an active policy revision. */
+/** Build the editable form from an active policy revision. The active
+ *  revision's `effective_from` is deliberately NOT copied into the form:
+ *  wisper-api uses `ORDER BY effective_from DESC` to pick the active version
+ *  and only defaults to now() when `effective_from` is ABSENT on the PUT
+ *  body. Echoing the old timestamp ties the new version and leaves the old
+ *  policy active. The existing effective-from is shown read-only in the
+ *  header; the datetime-local input stays blank so the admin can OPT IN to a
+ *  future effective time. */
 function toForm(p: Partial<PolicyRules>): Form {
   return {
     fee_bps: numStr(p.fee_bps),
@@ -75,7 +82,7 @@ function toForm(p: Partial<PolicyRules>): Form {
     max_ttl_seconds_cap: numStr(p.max_ttl_seconds_cap),
     new_account_window_hours: numStr(p.new_account_window_hours),
     min_isolation: p.min_isolation ?? "",
-    effective_from: p.effective_from ?? "",
+    effective_from: "",
   };
 }
 
@@ -147,12 +154,19 @@ function parseForm(f: Form): { rules: PolicyRules } | { error: string } {
   // min_isolation: "" → null (no floor), otherwise the chosen level.
   rules.min_isolation = f.min_isolation === "" ? null : f.min_isolation;
 
-  // effective_from: optional ISO-8601 datetime.
+  // effective_from: only sent when the admin explicitly typed a value in this
+  // session. datetime-local yields "YYYY-MM-DDTHH:MM" (no timezone); interpret
+  // as local time and serialize as a full ISO 8601 string with timezone so
+  // wisper-api's ORDER BY effective_from DESC picks up the new version. When
+  // the field is empty the KEY is omitted entirely so the server defaults to
+  // now() (echoing the old timestamp would tie the new revision and leave the
+  // old policy active).
   if (f.effective_from !== "") {
-    if (Number.isNaN(new Date(f.effective_from).getTime())) {
+    const d = new Date(f.effective_from);
+    if (Number.isNaN(d.getTime())) {
       return { error: "Effective from must be a valid ISO-8601 date-time." };
     }
-    rules.effective_from = f.effective_from;
+    rules.effective_from = d.toISOString();
   }
 
   return { rules };
@@ -209,9 +223,13 @@ export default function PolicyEditor() {
     setSaveError(null);
     setSaved(false);
     try {
-      const updated = await admin.updatePolicy(parsed.rules);
-      setPolicy(updated);
-      setForm(toForm(updated.active ?? parsed.rules));
+      // PUT /v1/admin/policy returns a bare PolicyView, NOT { active, versions },
+      // so re-read GET /v1/admin/policy after the save so the id chip, effective
+      // header, and history table reflect the newly-active revision.
+      await admin.updatePolicy(parsed.rules);
+      const refreshed = await admin.getPolicy();
+      setPolicy(refreshed);
+      setForm(toForm(refreshed.active ?? {}));
       setSaved(true);
     } catch (err) {
       setSaveError(

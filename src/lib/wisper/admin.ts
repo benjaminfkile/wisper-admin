@@ -25,6 +25,7 @@ import type {
   LedgerAccount,
   LedgerMutationResult,
   PolicyRules,
+  PolicyVersion,
   RefundRequest,
   RefundResponse,
   SuspendRequest,
@@ -98,16 +99,16 @@ export const admin = {
   },
 
   /** PUT /v1/admin/policy — replace the policy & pricing rules. Send only the
-   *  editable fields; the server assigns the new version and echoes the full
-   *  `{ active, versions }` envelope. */
-  updatePolicy(policy: PolicyRules): Promise<AdminPolicy> {
-    return request<AdminPolicy>(`${V1}/policy`, {
+   *  editable fields; the server assigns the new version and returns the bare
+   *  {@link PolicyVersion} (PolicyView), NOT the `{ active, versions }`
+   *  envelope. Callers that need the full envelope (id chip, effective
+   *  header, history table) should re-read {@link getPolicy} after this
+   *  resolves. */
+  updatePolicy(policy: PolicyRules): Promise<PolicyVersion> {
+    return request<PolicyVersion>(`${V1}/policy`, {
       method: "PUT",
       body: JSON.stringify(policy),
-    }).then((r) => ({
-      active: r?.active ?? undefined,
-      versions: Array.isArray(r?.versions) ? r!.versions : [],
-    }));
+    }).then((r) => r ?? {});
   },
 
   /** GET /v1/admin/hosts: a page of registered hosts. Honours the API's
