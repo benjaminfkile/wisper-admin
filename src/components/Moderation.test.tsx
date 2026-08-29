@@ -4,7 +4,13 @@ import userEvent from "@testing-library/user-event";
 import Moderation from "./Moderation";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import type { AdminHost, AdminUser } from "@/lib/wisper/types";
+import type {
+  AdminHost,
+  AdminHostList,
+  AdminListQuery,
+  AdminUser,
+  AdminUserList,
+} from "@/lib/wisper/types";
 
 vi.mock("@/lib/wisper/admin", () => ({
   admin: {
@@ -63,24 +69,92 @@ const USERS: AdminUser[] = [
   },
 ];
 
+/** Envelope helper: the paginated endpoint contract is `{ data, next_offset }`. */
+function page<T>(data: T[], next_offset: number | null = null): { data: T[]; next_offset: number | null } {
+  return { data, next_offset };
+}
+
 describe("Moderation", () => {
   beforeEach(() => {
-    listHosts.mockReset().mockResolvedValue(HOSTS);
-    listUsers.mockReset().mockResolvedValue(USERS);
+    listHosts
+      .mockReset()
+      .mockResolvedValue(page(HOSTS) as AdminHostList);
+    listUsers
+      .mockReset()
+      .mockResolvedValue(page(USERS) as AdminUserList);
     suspendHost.mockReset();
     unsuspendHost.mockReset();
   });
   afterEach(() => vi.clearAllMocks());
 
-  it("lists hosts and filters them by search", async () => {
+  it("lists the first page of hosts and sends the API's limit/offset params", async () => {
     render(<Moderation />);
 
     expect(await screen.findByText("Acme Compute")).toBeInTheDocument();
     expect(screen.getByText("Bad Actor Co")).toBeInTheDocument();
 
+    // The client asked for a page bounded by ?limit=25&offset=0, not a bare fetch.
+    const params = listHosts.mock.calls[0][0] as AdminListQuery | undefined;
+    expect(params).toMatchObject({ limit: 25, offset: 0 });
+    expect(params?.query).toBeUndefined();
+  });
+
+  it("sends the search box as the server's ?query= (not a client-side filter)", async () => {
+    // First a bare load, then a search-triggered load that echoes the query.
+    listHosts
+      .mockReset()
+      .mockResolvedValueOnce(page(HOSTS) as AdminHostList)
+      .mockResolvedValueOnce(page([HOSTS[0]]) as AdminHostList);
+
+    render(<Moderation />);
+    await screen.findByText("Acme Compute");
+
     await userEvent.type(screen.getByLabelText("Search hosts"), "acme");
-    expect(screen.getByText("Acme Compute")).toBeInTheDocument();
+
+    // Debounced fetch fires with the trimmed query; the server, not the client,
+    // decides which rows come back.
+    await waitFor(() => expect(listHosts).toHaveBeenCalledTimes(2));
+    const second = listHosts.mock.calls[1][0] as AdminListQuery | undefined;
+    expect(second).toMatchObject({ query: "acme", limit: 25, offset: 0 });
+
+    expect(await screen.findByText("Acme Compute")).toBeInTheDocument();
     expect(screen.queryByText("Bad Actor Co")).not.toBeInTheDocument();
+  });
+
+  it("reveals rows past the first page via Load more (uses next_offset)", async () => {
+    const MORE: AdminHost = {
+      id: "h-3",
+      owner_user_id: "user-c",
+      name: "Overflow Host",
+      status: "active",
+      online: true,
+    };
+    listHosts
+      .mockReset()
+      // First page reports there's more (next_offset = 25).
+      .mockResolvedValueOnce(page(HOSTS, 25) as AdminHostList)
+      // Second page returns the overflow row with no further pages.
+      .mockResolvedValueOnce(page([MORE], null) as AdminHostList);
+
+    render(<Moderation />);
+    await screen.findByText("Acme Compute");
+
+    // The overflow row is not on the first page yet.
+    expect(screen.queryByText("Overflow Host")).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /load more/i }),
+    );
+
+    expect(await screen.findByText("Overflow Host")).toBeInTheDocument();
+    // The second call used the echoed next_offset (25), not another 0-page fetch.
+    const nextCall = listHosts.mock.calls[1][0] as AdminListQuery | undefined;
+    expect(nextCall).toMatchObject({ limit: 25, offset: 25 });
+    // Once next_offset is null, "End of results." replaces the button.
+    expect(
+      screen.queryByRole("button", { name: /load more/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/end of results/i)).toBeInTheDocument();
   });
 
   it("shows each host's isolation levels as labeled chips and marks the default", async () => {
@@ -139,12 +213,14 @@ describe("Moderation", () => {
 
     expect(await screen.findByText("dana@example.com")).toBeInTheDocument();
     expect(listUsers).toHaveBeenCalled();
+    const params = listUsers.mock.calls[0][0] as AdminListQuery | undefined;
+    expect(params).toMatchObject({ limit: 25, offset: 0 });
   });
 
   it("surfaces a load error with a retry", async () => {
     listHosts.mockReset();
     listHosts.mockRejectedValueOnce(new WisperError(500, "internal", "hosts down"));
-    listHosts.mockResolvedValueOnce(HOSTS);
+    listHosts.mockResolvedValueOnce(page(HOSTS) as AdminHostList);
     render(<Moderation />);
 
     expect(await screen.findByText("hosts down")).toBeInTheDocument();

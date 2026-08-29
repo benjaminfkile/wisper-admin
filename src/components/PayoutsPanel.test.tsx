@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import PayoutsPanel from "./PayoutsPanel";
 import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
-import type { LedgerMutationResult } from "@/lib/wisper/types";
+import type { LedgerMutationResult, RefundResponse } from "@/lib/wisper/types";
 
 vi.mock("@/lib/wisper/admin", () => ({
   admin: { createRefund: vi.fn(), createAdjustment: vi.fn() },
@@ -18,6 +18,7 @@ const createAdjustment = vi.mocked(admin.createAdjustment);
 const DEBIT_ACCT = "11111111-1111-1111-1111-111111111111";
 const CREDIT_ACCT = "22222222-2222-2222-2222-222222222222";
 
+// AdjustmentResponse (used for the ledger-adjustment tests).
 const RESULT: LedgerMutationResult = {
   transaction_id: "txn-1",
   amount_cents: 1250,
@@ -25,6 +26,18 @@ const RESULT: LedgerMutationResult = {
   credit_account_id: CREDIT_ACCT,
   debit_balance_cents: -1250,
   credit_balance_cents: 1250,
+};
+
+// RefundResponse (used for the refund tests). Distinct from the ledger
+// adjustment response: the refund envelope carries the refund's own fields
+// (refund_id / user_id / amount / status / optional payment_intent) and has
+// no transaction_id, debit_account_id, or credit_account_id.
+const REFUND: RefundResponse = {
+  refund_id: "rfnd_1",
+  user_id: "u-1",
+  amount_cents: 1250,
+  currency: "USD",
+  status: "succeeded",
 };
 
 describe("PayoutsPanel", () => {
@@ -35,7 +48,7 @@ describe("PayoutsPanel", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("issues a refund, converting dollars to minor units with an idempotency key", async () => {
-    createRefund.mockResolvedValue(RESULT);
+    createRefund.mockResolvedValue(REFUND);
     render(<PayoutsPanel />);
 
     await userEvent.type(screen.getByLabelText("Refund consumer id"), "u-1");
@@ -50,13 +63,42 @@ describe("PayoutsPanel", () => {
     expect(body).not.toHaveProperty("lease_id");
     expect(typeof key).toBe("string");
     expect((key as string).length).toBeGreaterThan(0);
-    // ResultNote reads transaction_id and amount_cents from AdjustmentResponse.
-    expect(await screen.findByText(/txn-1/)).toBeInTheDocument();
+    // The success note reads the RefundResponse's actual fields: refund_id,
+    // amount, status, and the user id. It does NOT print ledger fields the
+    // API does not return on this envelope (transaction_id / debit_account_id
+    // / credit_account_id).
+    const note = (await screen.findByText(/rfnd_1/)).closest(
+      "[role='alert']",
+    ) as HTMLElement;
+    expect(note).not.toBeNull();
+    expect(within(note).getByText(/succeeded/)).toBeInTheDocument();
+    expect(within(note).getByText(/\$12\.50/)).toBeInTheDocument();
+    expect(within(note).getByText(/u-1/)).toBeInTheDocument();
+    // Nothing on the note describes a double-entry transaction.
+    expect(within(note).queryByText(/txn-/)).not.toBeInTheDocument();
+    expect(within(note).queryByText(/debit/i)).not.toBeInTheDocument();
+    expect(within(note).queryByText(/credit/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the payment intent on the refund success note when provided", async () => {
+    createRefund.mockResolvedValue({
+      ...REFUND,
+      payment_intent: "pi_abc123",
+    });
+    render(<PayoutsPanel />);
+
+    await userEvent.type(screen.getByLabelText("Refund consumer id"), "u-1");
+    await userEvent.type(screen.getByLabelText("Refund payment intent id"), "pi_abc123");
+    await userEvent.type(screen.getByLabelText("Refund amount"), "12.50");
+    await userEvent.type(screen.getByLabelText("Refund reason"), "service outage");
+    await userEvent.click(screen.getByRole("button", { name: /issue refund/i }));
+
+    expect(await screen.findByText(/pi_abc123/)).toBeInTheDocument();
   });
 
   it("reuses the same idempotency key when a refund retries after failure", async () => {
     createRefund.mockRejectedValueOnce(new WisperError(500, "internal", "boom"));
-    createRefund.mockResolvedValueOnce(RESULT);
+    createRefund.mockResolvedValueOnce(REFUND);
     render(<PayoutsPanel />);
 
     await userEvent.type(screen.getByLabelText("Refund consumer id"), "u-1");

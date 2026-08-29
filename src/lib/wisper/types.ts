@@ -203,6 +203,18 @@ export interface AdminUserList {
   next_offset?: number | string | null;
 }
 
+/** Query params shared by the paginated host/user list endpoints. The API
+ *  honours `?query=` for a case-insensitive search across id / name / email
+ *  (server-authoritative, so results beyond the first page are reachable),
+ *  and `?limit` / `?offset` for cursor-less paging (the response's
+ *  `next_offset` echoes the next page's starting offset when more rows
+ *  exist). */
+export interface AdminListQuery {
+  query?: string;
+  limit?: number;
+  offset?: number;
+}
+
 /** Body for suspend actions (unsuspend takes no body). */
 export interface SuspendRequest {
   reason: string;
@@ -234,8 +246,10 @@ export interface AdjustmentRequest {
   reason: string;
 }
 
-/** Response from POST /v1/admin/refunds or POST /v1/admin/adjustments.
- *  Models the double-entry transaction the API commits. */
+/** Response from POST /v1/admin/adjustments. Models the double-entry
+ *  transaction the API commits: the two operator-supplied account ids, the
+ *  positive amount, and the resulting balances on each leg. Refunds do NOT
+ *  return this shape; they return {@link RefundResponse} instead. */
 export interface LedgerMutationResult {
   transaction_id: string;
   amount_cents?: number;
@@ -243,6 +257,30 @@ export interface LedgerMutationResult {
   credit_account_id?: string;
   debit_balance_cents?: number;
   credit_balance_cents?: number;
+}
+
+/** Response from POST /v1/admin/refunds. Refunds are Stripe-mediated, so the
+ *  server's RefundResponse describes the refund itself (identifier, amount,
+ *  status, and the consumer + Stripe anchor); it does NOT include the ledger
+ *  fields (no `transaction_id`, `debit_account_id`, or `credit_account_id`).
+ *  Any downstream ledger entries the API writes are visible through the
+ *  ledger forensics view, not on this envelope. */
+export interface RefundResponse {
+  /** Server-assigned refund id. */
+  refund_id: string;
+  /** Consumer who was refunded. */
+  user_id: string;
+  /** Amount refunded, in minor units. */
+  amount_cents: number;
+  /** ISO currency code (e.g. "USD"), when the API includes one. */
+  currency?: string;
+  /** Refund lifecycle status (e.g. "succeeded", "pending", "failed"). */
+  status: string;
+  /** Stripe PaymentIntent id, when the refund is tied to a specific charge. */
+  payment_intent?: string;
+  /** Reason recorded on the refund. */
+  reason?: string;
+  created_at?: string;
 }
 
 /** A single audit-log entry (GET /v1/admin/audit). Field names are read

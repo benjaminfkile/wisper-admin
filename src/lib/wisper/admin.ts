@@ -14,6 +14,7 @@ import type {
   AdjustmentRequest,
   AdminHost,
   AdminHostList,
+  AdminListQuery,
   AdminOverview,
   AdminPolicy,
   AdminUser,
@@ -25,6 +26,7 @@ import type {
   LedgerMutationResult,
   PolicyRules,
   RefundRequest,
+  RefundResponse,
   SuspendRequest,
 } from "./types";
 
@@ -108,19 +110,31 @@ export const admin = {
     }));
   },
 
-  /** GET /v1/admin/hosts — all registered hosts, from the `{ data, next_offset }`
-   *  envelope. */
-  listHosts(): Promise<AdminHost[]> {
-    return request<AdminHostList>(`${V1}/hosts`).then((r) =>
-      unwrapData<AdminHost>(r),
+  /** GET /v1/admin/hosts: a page of registered hosts. Honours the API's
+   *  `?query=` (case-insensitive substring across id / name / label / owner)
+   *  and `?limit` / `?offset` paging; the response's `next_offset` echoes the
+   *  next page's starting offset, or is `null` when the list is exhausted. */
+  listHosts(params: AdminListQuery = {}): Promise<AdminHostList> {
+    return request<AdminHostList>(`${V1}/hosts${encode({ ...params })}`).then(
+      (r) => ({
+        data: unwrapData<AdminHost>(r),
+        next_offset:
+          (r as { next_offset?: number | string | null } | null)?.next_offset ??
+          null,
+      }),
     );
   },
 
-  /** GET /v1/admin/users — all registered consumer accounts, from the
-   *  `{ data, next_offset }` envelope. */
-  listUsers(): Promise<AdminUser[]> {
-    return request<AdminUserList>(`${V1}/users`).then((r) =>
-      unwrapData<AdminUser>(r),
+  /** GET /v1/admin/users: a page of registered consumer accounts. Honours
+   *  the same `?query=` / `?limit` / `?offset` params as `/hosts`. */
+  listUsers(params: AdminListQuery = {}): Promise<AdminUserList> {
+    return request<AdminUserList>(`${V1}/users${encode({ ...params })}`).then(
+      (r) => ({
+        data: unwrapData<AdminUser>(r),
+        next_offset:
+          (r as { next_offset?: number | string | null } | null)?.next_offset ??
+          null,
+      }),
     );
   },
 
@@ -156,14 +170,17 @@ export const admin = {
     });
   },
 
-  /** POST /v1/admin/refunds — refund a consumer against a lease/ledger entry.
-   *  Money-moving, so it carries an Idempotency-Key: retrying with the same key
-   *  is safe and returns the original result rather than duplicating the refund. */
+  /** POST /v1/admin/refunds: refund a consumer against a Stripe charge.
+   *  Money-moving, so it carries an Idempotency-Key: retrying with the same
+   *  key is safe and returns the original refund rather than duplicating it.
+   *  The response is {@link RefundResponse} (the refund itself); it does NOT
+   *  carry the ledger-transaction fields. Those show up separately in the
+   *  ledger forensics view. */
   createRefund(
     body: RefundRequest,
     idempotencyKey: string,
-  ): Promise<LedgerMutationResult> {
-    return request<LedgerMutationResult>(`${V1}/refunds`, {
+  ): Promise<RefundResponse> {
+    return request<RefundResponse>(`${V1}/refunds`, {
       method: "POST",
       headers: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(body),
