@@ -245,6 +245,23 @@ describe("admin client", () => {
     expect(result.credit_account_id).toBe("platform");
   });
 
+  it("getAudit coerces numeric audit row ids to strings so React keys stay unique", async () => {
+    // The wire id can arrive as a numeric primary key (not a string). If the
+    // client dropped it, every row's id collapsed to "" and AuditLog's React
+    // keys duplicated -- Load more silently deduped/dropped rows.
+    stubFetch({
+      body: {
+        data: [
+          { id: 101, action: "host.suspend" },
+          { id: 102, action: "policy.update" },
+        ],
+      },
+    });
+    const res = await admin.getAudit();
+    expect(res.data.map((e) => e.id)).toEqual(["101", "102"]);
+    expect(new Set(res.data.map((e) => e.id)).size).toBe(res.data.length);
+  });
+
   it("getAudit encodes query params and unwraps {data, next_cursor}, reading meta as the details payload", async () => {
     // Real AuditEntry: the API returns the structured payload as `meta`
     // (not metadata/context/details). The client must read `meta` so the

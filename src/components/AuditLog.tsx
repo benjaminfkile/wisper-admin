@@ -26,6 +26,7 @@ type Filters = { actor: string; action: string; target_id: string };
 
 const EMPTY: Filters = { actor: "", action: "", target_id: "" };
 const PAGE = 50;
+const PLACEHOLDER = "n/a";
 
 /** GUID/UUID (any RFC 4122 variant). The API rejects non-GUID `actor` and
  *  `target_id` filters with a validation_error, so we gate submission until
@@ -231,7 +232,7 @@ export default function AuditLog() {
                       {e.target_type || e.target_id ? (
                         <>
                           <Typography variant="body2">
-                            {e.target_type || "—"}
+                            {e.target_type || PLACEHOLDER}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
                             {e.target_id}
@@ -239,7 +240,7 @@ export default function AuditLog() {
                         </>
                       ) : (
                         <Typography variant="body2" color="text.secondary">
-                          —
+                          {PLACEHOLDER}
                         </Typography>
                       )}
                     </TableCell>
@@ -269,10 +270,10 @@ export default function AuditLog() {
   );
 }
 
-/** Render an entry's structured metadata compactly, or a dash when absent. */
+/** Render an entry's structured metadata compactly, or a placeholder when absent. */
 function Metadata({ metadata }: { metadata?: Record<string, unknown> }) {
   if (!metadata || Object.keys(metadata).length === 0) {
-    return <Typography variant="caption" color="text.secondary">—</Typography>;
+    return <Typography variant="caption" color="text.secondary">{PLACEHOLDER}</Typography>;
   }
   return (
     <Typography

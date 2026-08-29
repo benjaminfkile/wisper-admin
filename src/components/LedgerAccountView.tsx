@@ -25,11 +25,18 @@ import { WisperError } from "@/lib/wisper/client";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import type { LedgerAccount, LedgerEntry } from "@/lib/wisper/types";
 
+/** Ledger account kinds whose balance grows with debits (DEBIT-normal per
+ *  wisper-api Migrations/0006_Ledger.sql). Every other kind is CREDIT-normal.
+ *  Used to sign the per-row delta when we walk the running balance backwards. */
+const DEBIT_NORMAL_KINDS = new Set(["platform_cash", "stripe_fees"]);
+
+const PLACEHOLDER = "n/a";
+
 /** Cents amount rendered in the given color; empty when zero/missing so the
  *  double-entry columns read as one number per row. */
 function CentsCell({ cents, color }: { cents?: number; color: string }) {
   if (!cents || !Number.isFinite(cents)) {
-    return <Box component="span">{"—"}</Box>;
+    return <Box component="span">{PLACEHOLDER}</Box>;
   }
   return (
     <Box component="span" sx={{ color }}>
@@ -123,11 +130,17 @@ export default function LedgerAccountView() {
 
 /** Sort entries newest-first, then compute the running account balance after
  *  each entry. We anchor at the current balance (newest row) and walk older,
- *  subtracting each row's net effect (credit − debit). Rows with an
- *  unparseable timestamp fall to the bottom in encounter order. */
+ *  subtracting each row's net effect. The sign of that effect depends on
+ *  which side of the ledger the account is normalized on: credit-normal
+ *  accounts (user_wallet, host_earnings, platform_revenue) grow on credits so
+ *  delta = credit - debit; debit-normal accounts (platform_cash, stripe_fees
+ *  per wisper-api Migrations/0006_Ledger.sql) grow on debits so
+ *  delta = debit - credit. Rows with an unparseable timestamp fall to the
+ *  bottom in encounter order. */
 function withRunningBalance(
   entries: LedgerEntry[],
   currentBalance?: number,
+  kind?: string,
 ): Array<LedgerEntry & { balance_after?: number }> {
   const sorted = [...entries].sort((a, b) => {
     const ta = a.created_at ? Date.parse(a.created_at) : NaN;
@@ -140,10 +153,13 @@ function withRunningBalance(
   if (currentBalance == null || !Number.isFinite(currentBalance)) {
     return sorted.map((e) => ({ ...e }));
   }
+  const debitNormal = kind != null && DEBIT_NORMAL_KINDS.has(kind);
   let running = currentBalance;
   return sorted.map((e) => {
     const after = running;
-    const delta = (e.credit_cents ?? 0) - (e.debit_cents ?? 0);
+    const credit = e.credit_cents ?? 0;
+    const debit = e.debit_cents ?? 0;
+    const delta = debitNormal ? debit - credit : credit - debit;
     running = running - delta;
     return { ...e, balance_after: after };
   });
@@ -151,8 +167,8 @@ function withRunningBalance(
 
 function AccountDetail({ account }: { account: LedgerAccount }) {
   const rows = useMemo(
-    () => withRunningBalance(account.entries, account.balance_cents),
-    [account.entries, account.balance_cents],
+    () => withRunningBalance(account.entries, account.balance_cents, account.kind),
+    [account.entries, account.balance_cents, account.kind],
   );
 
   return (
@@ -169,8 +185,8 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
           <StatTile
             label="Owner"
             value={
-              <Typography variant="h6" component="p" sx={{ fontWeight: 700 }}>
-                {account.owner_user_id || "—"}
+              <Typography variant="h6" component="span" sx={{ fontWeight: 700 }}>
+                {account.owner_user_id || PLACEHOLDER}
               </Typography>
             }
             hint={
@@ -182,7 +198,7 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
         </Grid>
         <Grid size={{ xs: 12, sm: 6, md: 4 }}>
           <StatTile label="Account" value={
-            <Typography variant="h6" component="p" sx={{ fontWeight: 700, wordBreak: "break-all" }}>
+            <Typography variant="h6" component="span" sx={{ fontWeight: 700, wordBreak: "break-all" }}>
               {account.id}
             </Typography>
           } />
@@ -222,7 +238,7 @@ function AccountDetail({ account }: { account: LedgerAccount }) {
                   </TableCell>
                   <TableCell sx={{ wordBreak: "break-all" }}>
                     <Typography variant="body2">
-                      {entry.transaction_id || "—"}
+                      {entry.transaction_id || PLACEHOLDER}
                     </Typography>
                     {entry.lease_id && (
                       <Typography variant="caption" color="text.secondary">

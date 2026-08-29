@@ -50,8 +50,14 @@ function unwrapData<T>(res: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
 }
 
+/** Coerce a wire value to a string. Strings pass through; finite numbers
+ *  stringify (audit row ids arrive as numeric primary keys, and stringifying
+ *  them here is what keeps AuditLog's React keys stable and unique). Anything
+ *  else (null/boolean/object/NaN) becomes undefined. */
 function str(v: unknown): string | undefined {
-  return typeof v === "string" ? v : undefined;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return undefined;
 }
 
 /** Map a raw audit row to AuditEntry, tolerating the several plausible field

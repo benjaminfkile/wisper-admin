@@ -30,11 +30,16 @@ export default function StatTile({
             {label}
           </Typography>
         </Box>
-        <Typography variant="h4" component="p" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
+        <Typography variant="h4" component="div" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
           {value}
         </Typography>
         {hint && (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography
+            variant="body2"
+            component="div"
+            color="text.secondary"
+            sx={{ mt: 0.5 }}
+          >
             {hint}
           </Typography>
         )}
