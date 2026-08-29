@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import AlertTitle from "@mui/material/AlertTitle";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
+import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import Grid from "@mui/material/Grid";
 import InputAdornment from "@mui/material/InputAdornment";
@@ -21,7 +23,25 @@ import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
 import { newIdempotencyKey } from "@/lib/idempotency";
 import { formatMoney, parseMoneyToMinor } from "@/lib/format";
-import type { LedgerMutationResult, RefundResponse } from "@/lib/wisper/types";
+import type {
+  LedgerAccount,
+  LedgerMutationResult,
+  RefundResponse,
+} from "@/lib/wisper/types";
+
+/** RFC 4122 UUID matcher (any variant). The API rejects non-UUID ledger
+ *  account ids with a `validation_error` that surfaces as the misleading
+ *  "The request body is not valid JSON.", so we gate submission client-side. */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string): boolean {
+  return UUID_RE.test(value.trim());
+}
+
+/** Preview-lookup debounce: keystroke-quiet before firing GET
+ *  /v1/admin/ledger/accounts/:id, matching the moderation search pattern. */
+const PREVIEW_DEBOUNCE_MS = 300;
 
 /** Refunds and manual ledger adjustments. Both are money-moving POSTs guarded by
  *  an Idempotency-Key that survives retries of a single submission. */
@@ -211,8 +231,15 @@ function RefundForm() {
 
 /** Manual double-entry adjustment: the operator picks the two ledger accounts
  *  (money moves from `debit_account_id` to `credit_account_id`). Both must be
- *  real ledger-account UUIDs; the API rejects anything else. Look up an id via
- *  the Ledger forensics page when it isn't already at hand. */
+ *  real ledger-account UUIDs; the API rejects anything else with a generic
+ *  "The request body is not valid JSON." message, so we enforce the UUID shape
+ *  client-side and preview each account (kind / owner / current balance) so a
+ *  swapped debit/credit or a wrong id is visible before posting.
+ *
+ *  TODO(wisper-api): switch to a picker backed by
+ *  GET /v1/admin/ledger/accounts?kind=&owner_user_id= once that list endpoint
+ *  ships on the API's grunt branch. Until then, the operator pastes UUIDs (a
+ *  separate wisper-api task adds the endpoint). */
 function AdjustmentForm() {
   const [debitAccountId, setDebitAccountId] = useState("");
   const [creditAccountId, setCreditAccountId] = useState("");
@@ -226,11 +253,17 @@ function AdjustmentForm() {
 
   const debit = debitAccountId.trim();
   const credit = creditAccountId.trim();
+  const debitValid = debit === "" || isUuid(debit);
+  const creditValid = credit === "" || isUuid(credit);
   const magnitude = useMemo(() => parseMoneyToMinor(amount), [amount]);
   const sameAccount = debit !== "" && debit === credit;
+
+  const debitPreview = useAccountPreview(debit);
+  const creditPreview = useAccountPreview(credit);
+
   const canSubmit =
-    debit !== "" &&
-    credit !== "" &&
+    isUuid(debit) &&
+    isUuid(credit) &&
     !sameAccount &&
     reason.trim() !== "" &&
     magnitude != null &&
@@ -272,6 +305,17 @@ function AdjustmentForm() {
     }
   };
 
+  const debitHelper = accountFieldHelper({
+    valid: debitValid,
+    sameAccount,
+    fallback: "Money moves out of this account. Ledger-account UUID.",
+  });
+  const creditHelper = accountFieldHelper({
+    valid: creditValid,
+    sameAccount,
+    fallback: "Money moves into this account. Ledger-account UUID.",
+  });
+
   return (
     <Card variant="outlined" sx={{ height: "100%" }}>
       <CardContent>
@@ -288,32 +332,44 @@ function AdjustmentForm() {
           }}
         >
           <Stack spacing={2}>
-            <TextField
-              label="Debit account id"
-              required
-              value={debitAccountId}
-              onChange={(e) => setDebitAccountId(e.target.value)}
-              error={sameAccount}
-              helperText="Money moves out of this account. Ledger-account UUID."
-              slotProps={{
-                htmlInput: { "aria-label": "Adjustment debit account id" },
-              }}
-            />
-            <TextField
-              label="Credit account id"
-              required
-              value={creditAccountId}
-              onChange={(e) => setCreditAccountId(e.target.value)}
-              error={sameAccount}
-              helperText={
-                sameAccount
-                  ? "Debit and credit accounts must be different."
-                  : "Money moves into this account. Ledger-account UUID."
-              }
-              slotProps={{
-                htmlInput: { "aria-label": "Adjustment credit account id" },
-              }}
-            />
+            <Box>
+              <TextField
+                fullWidth
+                label="Debit account id"
+                required
+                value={debitAccountId}
+                onChange={(e) => setDebitAccountId(e.target.value)}
+                error={!debitValid || sameAccount}
+                helperText={debitHelper}
+                slotProps={{
+                  htmlInput: { "aria-label": "Adjustment debit account id" },
+                }}
+              />
+              <AccountPreview
+                label="Debit account"
+                preview={debitPreview}
+                shouldFetch={isUuid(debit)}
+              />
+            </Box>
+            <Box>
+              <TextField
+                fullWidth
+                label="Credit account id"
+                required
+                value={creditAccountId}
+                onChange={(e) => setCreditAccountId(e.target.value)}
+                error={!creditValid || sameAccount}
+                helperText={creditHelper}
+                slotProps={{
+                  htmlInput: { "aria-label": "Adjustment credit account id" },
+                }}
+              />
+              <AccountPreview
+                label="Credit account"
+                preview={creditPreview}
+                shouldFetch={isUuid(credit)}
+              />
+            </Box>
             <TextField
               label="Amount"
               required
@@ -352,6 +408,8 @@ function AdjustmentForm() {
             <BalancedPreview
               debitAccountId={debit}
               creditAccountId={credit}
+              debitAccount={debitPreview.account}
+              creditAccount={creditPreview.account}
               magnitude={magnitude}
             />
 
@@ -370,6 +428,176 @@ function AdjustmentForm() {
         </Box>
       </CardContent>
     </Card>
+  );
+}
+
+function accountFieldHelper({
+  valid,
+  sameAccount,
+  fallback,
+}: {
+  valid: boolean;
+  sameAccount: boolean;
+  fallback: string;
+}): string {
+  if (sameAccount) return "Debit and credit accounts must be different.";
+  if (!valid) return "Enter a ledger-account UUID (36-character, RFC 4122).";
+  return fallback;
+}
+
+/** Fetched-account snapshot for the inline preview. `account` is set when a
+ *  lookup succeeded; `notFound` is set when the API returned 404 for the id;
+ *  `error` carries any other failure message. */
+interface AccountPreviewState {
+  loading: boolean;
+  notFound: boolean;
+  error: string | null;
+  account: LedgerAccount | null;
+}
+
+const EMPTY_PREVIEW: AccountPreviewState = {
+  loading: false,
+  notFound: false,
+  error: null,
+  account: null,
+};
+
+/** Debounced GET /v1/admin/ledger/accounts/:id for the given input. Only fires
+ *  when the trimmed id parses as a UUID; 404 becomes `notFound` so callers can
+ *  render "no such account" inline. A stale response (the id has since
+ *  changed) is discarded via a monotonically increasing request seq. */
+function useAccountPreview(id: string): AccountPreviewState {
+  const [state, setState] = useState<AccountPreviewState>(EMPTY_PREVIEW);
+  const seqRef = useRef(0);
+
+  useEffect(() => {
+    const trimmed = id.trim();
+    if (trimmed === "" || !isUuid(trimmed)) {
+      seqRef.current += 1;
+      setState(EMPTY_PREVIEW);
+      return;
+    }
+    const seq = ++seqRef.current;
+    setState((prev) => ({ ...prev, loading: true, error: null, notFound: false }));
+    const timer = setTimeout(() => {
+      admin
+        .getLedgerAccount(trimmed)
+        .then((account) => {
+          if (seqRef.current !== seq) return;
+          setState({ loading: false, notFound: false, error: null, account });
+        })
+        .catch((err: unknown) => {
+          if (seqRef.current !== seq) return;
+          if (err instanceof WisperError && err.status === 404) {
+            setState({
+              loading: false,
+              notFound: true,
+              error: null,
+              account: null,
+            });
+            return;
+          }
+          setState({
+            loading: false,
+            notFound: false,
+            error:
+              err instanceof WisperError
+                ? err.message
+                : "Failed to load the account.",
+            account: null,
+          });
+        });
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [id]);
+
+  return state;
+}
+
+/** Inline account snapshot rendered under a debit/credit id field: the account
+ *  kind, owner id, and current balance for the typed UUID. Renders nothing
+ *  until an id is typed; shows a small spinner while the lookup is in flight;
+ *  shows "no such account" on 404 so a swapped or wrong id is obvious before
+ *  posting the adjustment. */
+function AccountPreview({
+  label,
+  preview,
+  shouldFetch,
+}: {
+  label: string;
+  preview: AccountPreviewState;
+  shouldFetch: boolean;
+}) {
+  if (!shouldFetch) return null;
+  if (preview.loading) {
+    return (
+      <Box
+        sx={{
+          mt: 1,
+          color: "text.secondary",
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+        }}
+      >
+        <CircularProgress
+          size={14}
+          aria-label={`Looking up ${label.toLowerCase()}`}
+        />
+        <Typography variant="caption">Looking up account…</Typography>
+      </Box>
+    );
+  }
+  if (preview.notFound) {
+    return (
+      <Typography
+        variant="caption"
+        color="error"
+        sx={{ mt: 1, display: "block" }}
+        role="status"
+      >
+        {label}: no such account.
+      </Typography>
+    );
+  }
+  if (preview.error) {
+    return (
+      <Typography
+        variant="caption"
+        color="error"
+        sx={{ mt: 1, display: "block" }}
+        role="status"
+      >
+        {label}: {preview.error}
+      </Typography>
+    );
+  }
+  if (!preview.account) return null;
+  const acct = preview.account;
+  return (
+    <Box
+      sx={{
+        mt: 1,
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: 1,
+      }}
+      role="status"
+      aria-label={`${label} preview`}
+    >
+      {acct.kind ? (
+        <Chip size="small" variant="outlined" label={acct.kind} />
+      ) : null}
+      <Typography variant="caption" color="text.secondary">
+        {acct.owner_user_id
+          ? `owner ${acct.owner_user_id}`
+          : "platform account"}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        &middot; balance {formatMoney(acct.balance_cents, acct.currency)}
+      </Typography>
+    </Box>
   );
 }
 
@@ -399,10 +627,12 @@ function ValidationErrorAlert({
   );
 }
 
-/** Flatten the API's `error.details` into human-readable lines. Tolerant of the
- *  shapes wisper-api uses: an array of strings, an array of `{ field, message }`
- *  records, or a `{ field: message }` map. Anything else collapses to zero lines
- *  so the bare error message still renders. */
+/** Flatten the API's `error.details` into human-readable lines. Tolerant of
+ *  the shapes wisper-api uses: the real shape today is a FLAT
+ *  `{ field: "credit_account_id" }` object (a single-field marker), but the
+ *  server may also send an array of strings, an array of `{ field, message }`
+ *  records, or a `{ field: message }` map. Anything else collapses to zero
+ *  lines so the bare error message still renders. */
 function detailLines(details: unknown): string[] {
   if (details == null) return [];
   if (Array.isArray(details)) {
@@ -421,21 +651,40 @@ function detailLines(details: unknown): string[] {
       .filter((s): s is string => typeof s === "string" && s.length > 0);
   }
   if (typeof details === "object") {
-    return Object.entries(details as Record<string, unknown>)
+    const rec = details as Record<string, unknown>;
+    // Real API shape today: `{ field: "credit_account_id" }` marks which field
+    // was invalid, with no per-field message. Surface that as "field: <name>"
+    // rather than swallowing it and leaving only the top-line message.
+    const entries = Object.entries(rec);
+    if (
+      entries.length === 1 &&
+      entries[0][0] === "field" &&
+      typeof entries[0][1] === "string"
+    ) {
+      return [`field: ${entries[0][1]}`];
+    }
+    return entries
       .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
       .filter((s) => s.length > 0);
   }
   return [];
 }
 
-/** Show both legs of the double-entry so the admin sees it balances to zero. */
+/** Show both legs of the double-entry so the admin sees it balances to zero.
+ *  When a lookup has fetched the account (kind + owner), we label the leg with
+ *  those attributes as well as the UUID, so a swapped debit/credit stands out
+ *  visually before the operator posts. */
 function BalancedPreview({
   debitAccountId,
   creditAccountId,
+  debitAccount,
+  creditAccount,
   magnitude,
 }: {
   debitAccountId: string;
   creditAccountId: string;
+  debitAccount: LedgerAccount | null;
+  creditAccount: LedgerAccount | null;
   magnitude: number | null;
 }) {
   if (magnitude == null || magnitude <= 0) return null;
@@ -450,7 +699,11 @@ function BalancedPreview({
         <TableBody>
           <TableRow>
             <TableCell sx={{ border: 0, py: 0.5, wordBreak: "break-all" }}>
-              {creditAccountId || "credit account"}
+              <LegLabel
+                id={creditAccountId}
+                account={creditAccount}
+                fallback="credit account"
+              />
             </TableCell>
             <TableCell align="right" sx={{ border: 0, py: 0.5 }}>
               {money(magnitude)}
@@ -458,7 +711,11 @@ function BalancedPreview({
           </TableRow>
           <TableRow>
             <TableCell sx={{ border: 0, py: 0.5, wordBreak: "break-all" }}>
-              {debitAccountId || "debit account"}
+              <LegLabel
+                id={debitAccountId}
+                account={debitAccount}
+                fallback="debit account"
+              />
             </TableCell>
             <TableCell align="right" sx={{ border: 0, py: 0.5 }}>
               {money(-magnitude)}
@@ -472,6 +729,36 @@ function BalancedPreview({
           </TableRow>
         </TableBody>
       </Table>
+    </Box>
+  );
+}
+
+/** One leg's label in the balanced-entry preview: the raw UUID, plus the
+ *  fetched kind / owner when a preview lookup has resolved for that id. */
+function LegLabel({
+  id,
+  account,
+  fallback,
+}: {
+  id: string;
+  account: LedgerAccount | null;
+  fallback: string;
+}) {
+  const primary = id || fallback;
+  if (!account) {
+    return <Typography variant="body2">{primary}</Typography>;
+  }
+  const details: string[] = [];
+  if (account.kind) details.push(account.kind);
+  if (account.owner_user_id) details.push(`owner ${account.owner_user_id}`);
+  return (
+    <Box>
+      <Typography variant="body2">{primary}</Typography>
+      {details.length > 0 && (
+        <Typography variant="caption" color="text.secondary">
+          {details.join(" / ")}
+        </Typography>
+      )}
     </Box>
   );
 }
