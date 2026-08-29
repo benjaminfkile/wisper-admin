@@ -797,9 +797,11 @@ function LegLabel({
 }
 
 /** Ledger-account kinds the picker offers. The two owner-scoped kinds live in
- *  {@link OWNER_SCOPED_KINDS} so the picker knows when to require an owner
- *  filter before the accounts query can go out (the API requires
- *  `owner_user_id` for those kinds). */
+ *  {@link OWNER_SCOPED_KINDS} so the picker knows when to surface an owner
+ *  filter as an optional narrowing. GET /v1/admin/ledger/accounts does NOT
+ *  require `owner_user_id` for these kinds: querying by kind alone returns
+ *  every wallet / host_earnings account paged, so the owner filter is offered
+ *  only to narrow the results. */
 const KIND_OPTIONS = [
   "user_wallet",
   "host_earnings",
@@ -825,27 +827,40 @@ function toOffset(v: number | string | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Resolves a typed owner filter (email or user id) into an `owner_user_id`
- *  for the accounts query. A UUID passes through directly; anything else is
- *  looked up via GET /v1/admin/users?query= and the first match's id is used.
- *  Debounced so a fresh keystroke doesn't fire a request per character. */
-function useOwnerResolver(input: string, enabled: boolean): {
+/** How many users to fetch when the owner filter is an email substring: a
+ *  partial email frequently matches more than one account, so the picker
+ *  requests a small page and surfaces every hit for the operator to pick from
+ *  rather than silently taking the first row. */
+const PICKER_OWNER_LOOKUP_LIMIT = 10;
+
+/** A single candidate user for the owner filter. Returned from
+ *  {@link useOwnerLookup}: a UUID input yields one synthesized candidate; an
+ *  email substring yields every match on the fetched page. */
+interface OwnerCandidate {
+  id: string;
+  email: string | null;
+}
+
+/** Resolves a typed owner filter (email or user id) into one or more
+ *  candidate users for the accounts query. A UUID passes through directly as a
+ *  single candidate; an email substring is looked up via GET
+ *  /v1/admin/users?query= with a small page and every match is returned so the
+ *  caller can auto-select on one hit or present a chooser on many. Debounced
+ *  so a fresh keystroke doesn't fire a request per character. */
+function useOwnerLookup(input: string, enabled: boolean): {
   loading: boolean;
-  ownerUserId: string | null;
-  ownerEmail: string | null;
+  candidates: OwnerCandidate[];
   notFound: boolean;
   error: string | null;
 } {
   const [state, setState] = useState<{
     loading: boolean;
-    ownerUserId: string | null;
-    ownerEmail: string | null;
+    candidates: OwnerCandidate[];
     notFound: boolean;
     error: string | null;
   }>({
     loading: false,
-    ownerUserId: null,
-    ownerEmail: null,
+    candidates: [],
     notFound: false,
     error: null,
   });
@@ -857,8 +872,7 @@ function useOwnerResolver(input: string, enabled: boolean): {
       seqRef.current += 1;
       setState({
         loading: false,
-        ownerUserId: null,
-        ownerEmail: null,
+        candidates: [],
         notFound: false,
         error: null,
       });
@@ -868,8 +882,7 @@ function useOwnerResolver(input: string, enabled: boolean): {
       seqRef.current += 1;
       setState({
         loading: false,
-        ownerUserId: trimmed,
-        ownerEmail: null,
+        candidates: [{ id: trimmed, email: null }],
         notFound: false,
         error: null,
       });
@@ -879,15 +892,17 @@ function useOwnerResolver(input: string, enabled: boolean): {
     setState((prev) => ({ ...prev, loading: true, error: null, notFound: false }));
     const timer = setTimeout(() => {
       admin
-        .listUsers({ query: trimmed, limit: 1, offset: 0 })
+        .listUsers({
+          query: trimmed,
+          limit: PICKER_OWNER_LOOKUP_LIMIT,
+          offset: 0,
+        })
         .then((res) => {
           if (seqRef.current !== seq) return;
-          const hit = res.data[0];
-          if (!hit) {
+          if (res.data.length === 0) {
             setState({
               loading: false,
-              ownerUserId: null,
-              ownerEmail: null,
+              candidates: [],
               notFound: true,
               error: null,
             });
@@ -895,8 +910,10 @@ function useOwnerResolver(input: string, enabled: boolean): {
           }
           setState({
             loading: false,
-            ownerUserId: hit.id,
-            ownerEmail: hit.email ?? null,
+            candidates: res.data.map((u) => ({
+              id: u.id,
+              email: u.email ?? null,
+            })),
             notFound: false,
             error: null,
           });
@@ -905,8 +922,7 @@ function useOwnerResolver(input: string, enabled: boolean): {
           if (seqRef.current !== seq) return;
           setState({
             loading: false,
-            ownerUserId: null,
-            ownerEmail: null,
+            candidates: [],
             notFound: false,
             error:
               err instanceof WisperError
@@ -922,9 +938,14 @@ function useOwnerResolver(input: string, enabled: boolean): {
 }
 
 /** Modal-backed picker for one leg of the adjustment. The operator narrows by
- *  kind (required) and, for owner-scoped kinds, by owner (email or user id),
- *  then picks a row from the paged GET /v1/admin/ledger/accounts result. The
- *  selected id is handed back to the caller, which fills the leg's field. */
+ *  kind (required) and, for owner-scoped kinds, optionally by owner (email or
+ *  user id) as an extra filter, then picks a row from the paged GET
+ *  /v1/admin/ledger/accounts result. The API does not require `owner_user_id`
+ *  for owner-scoped kinds, so leaving the owner filter blank browses every
+ *  account of that kind. When an email substring matches more than one user,
+ *  the picker surfaces every match for the operator to pick from rather than
+ *  silently picking the first row. The selected id is handed back to the
+ *  caller, which fills the leg's field. */
 function AccountPickerDialog({
   leg,
   onClose,
@@ -945,9 +966,20 @@ function AccountPickerDialog({
   const requestSeqRef = useRef(0);
 
   const ownerScoped = OWNER_SCOPED_KINDS.has(kind);
-  const owner = useOwnerResolver(ownerInput, ownerScoped);
-  const canQuery = kind !== "" && (!ownerScoped || owner.ownerUserId != null);
-  const ownerUserId = ownerScoped ? owner.ownerUserId : null;
+  const owner = useOwnerLookup(ownerInput, ownerScoped);
+  const ownerInputTrimmed = ownerInput.trim();
+  const singleOwner =
+    owner.candidates.length === 1 ? owner.candidates[0] : null;
+  const multipleOwners =
+    owner.candidates.length > 1 ? owner.candidates : [];
+  // No owner input → browse every account of the kind. Owner input → the
+  // accounts query waits until the input resolves to exactly one user (either
+  // a single API match / UUID passthrough, or the operator picked one of the
+  // several matches from the list below the field).
+  const ownerFilterReady =
+    !ownerScoped || ownerInputTrimmed === "" || singleOwner != null;
+  const canQuery = kind !== "" && ownerFilterReady;
+  const ownerUserId = ownerScoped ? singleOwner?.id ?? null : null;
 
   const runFirst = useCallback(async () => {
     if (!canQuery) {
@@ -1015,14 +1047,18 @@ function AccountPickerDialog({
   const legLabel = leg === "debit" ? "debit" : leg === "credit" ? "credit" : "";
   const ownerHelper = (() => {
     if (!ownerScoped) return "";
-    if (ownerInput.trim() === "") return "Enter an email or user id to search.";
+    if (ownerInputTrimmed === "")
+      return "Optional. Leave blank to browse every account of this kind, or enter an email or user id to narrow.";
     if (owner.loading) return "Looking up owner…";
     if (owner.error) return owner.error;
     if (owner.notFound) return "No matching user.";
-    if (owner.ownerUserId) {
-      return owner.ownerEmail
-        ? `Owner ${owner.ownerEmail} (${owner.ownerUserId}).`
-        : `Owner ${owner.ownerUserId}.`;
+    if (singleOwner) {
+      return singleOwner.email
+        ? `Owner ${singleOwner.email} (${singleOwner.id}).`
+        : `Owner ${singleOwner.id}.`;
+    }
+    if (multipleOwners.length > 0) {
+      return `${multipleOwners.length} users match. Pick one below to narrow the accounts.`;
     }
     return "";
   })();
@@ -1051,7 +1087,7 @@ function AccountPickerDialog({
 
           {ownerScoped && (
             <TextField
-              label="Owner (email or user id)"
+              label="Owner (email or user id, optional)"
               value={ownerInput}
               onChange={(e) => setOwnerInput(e.target.value)}
               helperText={ownerHelper}
@@ -1062,13 +1098,61 @@ function AccountPickerDialog({
             />
           )}
 
+          {ownerScoped && multipleOwners.length > 0 && (
+            <Box>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mb: 1 }}
+              >
+                Multiple users match. Pick one to narrow the accounts to their
+                wallet:
+              </Typography>
+              <Table
+                size="small"
+                aria-label="Owner match candidates"
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Email</TableCell>
+                    <TableCell>User id</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {multipleOwners.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell sx={{ wordBreak: "break-all" }}>
+                        {c.email ?? "(no email)"}
+                      </TableCell>
+                      <TableCell sx={{ wordBreak: "break-all" }}>
+                        {c.id}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          onClick={() => setOwnerInput(c.id)}
+                          aria-label={`Use owner ${c.email ?? c.id}`}
+                        >
+                          Use
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          )}
+
           {kind === "" ? (
             <Typography variant="caption" color="text.secondary">
               Choose a kind to list accounts.
             </Typography>
-          ) : ownerScoped && !canQuery ? (
+          ) : !canQuery ? (
             <Typography variant="caption" color="text.secondary">
-              Resolve an owner to list {kind} accounts.
+              {multipleOwners.length > 0
+                ? `Pick one of the matching users above to narrow the ${kind} accounts, or clear the owner filter to browse every account of this kind.`
+                : `Resolve the owner filter above, or clear it to browse every ${kind} account.`}
             </Typography>
           ) : loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
