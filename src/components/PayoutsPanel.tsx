@@ -21,7 +21,7 @@ import { admin } from "@/lib/wisper/admin";
 import { WisperError } from "@/lib/wisper/client";
 import { newIdempotencyKey } from "@/lib/idempotency";
 import { formatMoney, parseMoneyToMinor } from "@/lib/format";
-import type { LedgerMutationResult } from "@/lib/wisper/types";
+import type { LedgerMutationResult, RefundResponse } from "@/lib/wisper/types";
 
 /** Refunds and manual ledger adjustments. Both are money-moving POSTs guarded by
  *  an Idempotency-Key that survives retries of a single submission. */
@@ -51,8 +51,28 @@ export default function PayoutsPanel() {
   );
 }
 
-/** Success confirmation shared by both forms. */
-function ResultNote({ result }: { result: LedgerMutationResult }) {
+/** Success confirmation for the refund form. The RefundResponse describes the
+ *  refund itself (id, amount, status, and the Stripe anchor), not a ledger
+ *  transaction, so this note reports only those fields. */
+function RefundResultNote({ result }: { result: RefundResponse }) {
+  return (
+    <Alert severity="success" sx={{ mt: 2 }}>
+      Refund <code>{result.refund_id}</code> {result.status || "recorded"}:{" "}
+      <strong>{formatMoney(result.amount_cents, result.currency)}</strong> to{" "}
+      <code>{result.user_id}</code>
+      {result.payment_intent ? (
+        <>
+          {" "}
+          against payment intent <code>{result.payment_intent}</code>
+        </>
+      ) : null}
+      .
+    </Alert>
+  );
+}
+
+/** Success confirmation for the adjustment form: a double-entry ledger post. */
+function AdjustmentResultNote({ result }: { result: LedgerMutationResult }) {
   return (
     <Alert severity="success" sx={{ mt: 2 }}>
       Transaction <code>{result.transaction_id}</code> posted:{" "}
@@ -69,7 +89,7 @@ function RefundForm() {
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<LedgerMutationResult | null>(null);
+  const [result, setResult] = useState<RefundResponse | null>(null);
   const [busy, setBusy] = useState(false);
   // Held across retries of the same submission; cleared on success so the next
   // refund gets a fresh key.
@@ -172,7 +192,7 @@ function RefundForm() {
             />
 
             {error && <Alert severity="error">{error}</Alert>}
-            {result && <ResultNote result={result} />}
+            {result && <RefundResultNote result={result} />}
 
             <Button
               type="submit"
@@ -336,7 +356,7 @@ function AdjustmentForm() {
             />
 
             {error && <ValidationErrorAlert message={error} details={errorDetails} />}
-            {result && <ResultNote result={result} />}
+            {result && <AdjustmentResultNote result={result} />}
 
             <Button
               type="submit"

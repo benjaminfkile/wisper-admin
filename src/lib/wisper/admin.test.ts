@@ -58,22 +58,37 @@ describe("admin client", () => {
     await expect(admin.getOverview()).resolves.toEqual({});
   });
 
-  it("listHosts unwraps the {data, next_offset} envelope", async () => {
+  it("listHosts returns the {data, next_offset} envelope and echoes the query/paging params on the URL", async () => {
     const calls = stubFetch({
-      body: { data: [{ id: "h-1" }, { id: "h-2" }], next_offset: 2 },
+      body: { data: [{ id: "h-1" }, { id: "h-2" }], next_offset: 25 },
     });
-    const hosts = await admin.listHosts();
-    expect(hosts.map((h) => h.id)).toEqual(["h-1", "h-2"]);
+    const res = await admin.listHosts({ query: "acme", limit: 25, offset: 0 });
+    expect(res.data.map((h) => h.id)).toEqual(["h-1", "h-2"]);
+    expect(res.next_offset).toBe(25);
+    // Query, limit, and offset are forwarded to the API, so the server (not
+    // the client) decides which rows come back, and results past the first
+    // page are reachable.
+    expect(calls[0].url).toBe(
+      "/wisper/v1/admin/hosts?query=acme&limit=25&offset=0",
+    );
+  });
+
+  it("listHosts degrades a misshaped envelope to empty data + no next page", async () => {
+    stubFetch({ body: { unexpected: true } });
+    await expect(admin.listHosts()).resolves.toEqual({
+      data: [],
+      next_offset: null,
+    });
+  });
+
+  it("listHosts omits empty query/limit/offset params from the URL", async () => {
+    const calls = stubFetch({ body: { data: [], next_offset: null } });
+    await admin.listHosts();
     expect(calls[0].url).toBe("/wisper/v1/admin/hosts");
   });
 
-  it("listHosts degrades a misshaped envelope to an empty list", async () => {
-    stubFetch({ body: { unexpected: true } });
-    await expect(admin.listHosts()).resolves.toEqual([]);
-  });
-
-  it("listUsers unwraps the {data, next_offset} envelope", async () => {
-    stubFetch({
+  it("listUsers returns the {data, next_offset} envelope with the paging params applied", async () => {
+    const calls = stubFetch({
       body: {
         data: [
           {
@@ -87,8 +102,10 @@ describe("admin client", () => {
         next_offset: null,
       },
     });
-    const users = await admin.listUsers();
-    expect(users[0].email).toBe("dana@example.com");
+    const res = await admin.listUsers({ limit: 25, offset: 25 });
+    expect(res.data[0].email).toBe("dana@example.com");
+    expect(res.next_offset).toBeNull();
+    expect(calls[0].url).toBe("/wisper/v1/admin/users?limit=25&offset=25");
   });
 
   it("updatePolicy PUTs a JSON body with the real API field names", async () => {
@@ -129,20 +146,24 @@ describe("admin client", () => {
     expect(JSON.parse(calls[0].init.body as string).reason).toBe("abuse");
   });
 
-  it("createRefund POSTs user_id + amount_cents (no lease_id) with an Idempotency-Key", async () => {
+  it("createRefund POSTs user_id + amount_cents (no lease_id) with an Idempotency-Key and returns the RefundResponse", async () => {
     // Real AdminRefundRequest: user_id, amount_cents, reason, optional payment_intent.
     // No lease_id — the API ignores it; payment_intent is the right optional anchor.
+    // The real RefundResponse describes the refund itself (refund_id, amount,
+    // status, and the Stripe anchor), NOT a ledger transaction. There is no
+    // `transaction_id`, `debit_account_id`, or `credit_account_id` on this DTO.
     const calls = stubFetch({
       body: {
-        transaction_id: "txn-r1",
+        refund_id: "rfnd_1",
+        user_id: "u-1",
         amount_cents: 500,
-        debit_account_id: "platform",
-        credit_account_id: "acct-1",
-        debit_balance_cents: -500,
-        credit_balance_cents: 500,
+        currency: "USD",
+        status: "succeeded",
+        reason: "outage",
+        created_at: "2026-08-01T00:00:00Z",
       },
     });
-    await admin.createRefund(
+    const res = await admin.createRefund(
       { user_id: "u-1", amount_cents: 500, reason: "outage" },
       "idem-key-123",
     );
@@ -153,23 +174,33 @@ describe("admin client", () => {
     const body = JSON.parse(calls[0].init.body as string);
     expect(body).toMatchObject({ user_id: "u-1", amount_cents: 500, reason: "outage" });
     expect(body).not.toHaveProperty("lease_id");
+    // The refund response carries the refund's own fields, not ledger fields.
+    expect(res.refund_id).toBe("rfnd_1");
+    expect(res.status).toBe("succeeded");
+    expect(res.user_id).toBe("u-1");
+    expect(res.amount_cents).toBe(500);
+    expect(res).not.toHaveProperty("transaction_id");
+    expect(res).not.toHaveProperty("debit_account_id");
+    expect(res).not.toHaveProperty("credit_account_id");
   });
 
   it("createRefund sends payment_intent when provided", async () => {
     const calls = stubFetch({
       body: {
-        transaction_id: "txn-r2",
+        refund_id: "rfnd_2",
+        user_id: "u-2",
         amount_cents: 1000,
-        debit_account_id: "platform",
-        credit_account_id: "acct-2",
+        status: "succeeded",
+        payment_intent: "pi_abc123",
       },
     });
-    await admin.createRefund(
+    const res = await admin.createRefund(
       { user_id: "u-2", payment_intent: "pi_abc123", amount_cents: 1000, reason: "dupe" },
       "idem-key-456",
     );
     const body = JSON.parse(calls[0].init.body as string);
     expect(body.payment_intent).toBe("pi_abc123");
+    expect(res.payment_intent).toBe("pi_abc123");
   });
 
   it("createAdjustment POSTs double-entry shape (debit/credit accounts, positive amount_cents)", async () => {

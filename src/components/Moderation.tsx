@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -34,6 +34,14 @@ import type { AdminHost, AdminUser, IsolationLevel } from "@/lib/wisper/types";
 
 type Kind = "hosts" | "users";
 
+/** How many rows we request per page. Matches the API's own default so the
+ *  behaviour is intuitive; "Load more" reveals the rest via `next_offset`. */
+const PAGE = 25;
+
+/** Debounce for the search input: wait this long after the last keystroke
+ *  before hitting the API, so typing doesn't fan out a request per character. */
+const SEARCH_DEBOUNCE_MS = 300;
+
 /** Human labels for the requestable isolation levels (weakest → strongest). */
 const ISOLATION_LABELS: Record<IsolationLevel, string> = {
   shared: "Shared kernel",
@@ -47,16 +55,17 @@ function isolationLabel(level: string): string {
   return ISOLATION_LABELS[level as IsolationLevel] ?? level;
 }
 
-/** Case-insensitive substring match across the given (possibly missing) fields. */
-function matchesFields(fields: Array<string | undefined | null>, q: string): boolean {
-  if (!q) return true;
-  const needle = q.toLowerCase();
-  return fields.some((f) => (f ?? "").toLowerCase().includes(needle));
-}
-
 /** Best human name for a host: name, then label, then its id. */
 function hostName(h: AdminHost): string {
   return h.name || h.label || h.id;
+}
+
+/** Convert the API's `next_offset` (number, numeric string, or null) into a
+ *  number, returning `null` when there is no next page. */
+function parseOffset(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Host & user moderation: search the directory and suspend/unsuspend accounts.
@@ -214,13 +223,19 @@ function SuspendDialog({
   );
 }
 
-/** Shared list scaffolding: search box, refresh, loading/error/empty states. */
+/** Shared list scaffolding: search box, refresh, loading/error/empty states,
+ *  and the "Load more" pager driven by the API's `next_offset`. Search is
+ *  server-side (the API's `?query=`), so every keystroke debounces into a
+ *  fresh first-page fetch. */
 function DirectoryFrame({
   kind,
   query,
   onQuery,
   onRefresh,
   loading,
+  loadingMore,
+  hasMore,
+  onLoadMore,
   error,
   actionError,
   empty,
@@ -231,6 +246,9 @@ function DirectoryFrame({
   onQuery: (v: string) => void;
   onRefresh: () => void;
   loading: boolean;
+  loadingMore: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
   error: string | null;
   actionError: string | null;
   empty: boolean;
@@ -292,42 +310,92 @@ function DirectoryFrame({
           No {noun} match your search.
         </Typography>
       ) : (
-        children
+        <>
+          {children}
+          <Box sx={{ display: "flex", justifyContent: "center", mt: 2 }}>
+            {hasMore ? (
+              <Button onClick={onLoadMore} disabled={loadingMore}>
+                {loadingMore ? "Loading…" : "Load more"}
+              </Button>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                End of results.
+              </Typography>
+            )}
+          </Box>
+        </>
       )}
     </Box>
   );
 }
 
-/** Hosts directory with suspend/unsuspend. */
+/** Hosts directory with suspend/unsuspend. Search + paging are server-side
+ *  (`?query=`, `?limit`, `?offset` + `next_offset`) so results beyond the
+ *  first page are reachable. */
 function HostsPanel() {
   const [hosts, setHosts] = useState<AdminHost[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<SuspendTarget | null>(null);
+  // Bumps whenever the operator hits Refresh so a stale in-flight response
+  // can't overwrite the fresh page.
+  const requestSeqRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const loadFirst = useCallback(async (q: string) => {
+    const seq = ++requestSeqRef.current;
     setError(null);
     setHosts(null);
+    setNextOffset(null);
     try {
-      setHosts(await admin.listHosts());
+      const res = await admin.listHosts({
+        query: q.trim() || undefined,
+        limit: PAGE,
+        offset: 0,
+      });
+      if (requestSeqRef.current !== seq) return;
+      setHosts(res.data);
+      setNextOffset(parseOffset(res.next_offset));
     } catch (err) {
+      if (requestSeqRef.current !== seq) return;
       setError(err instanceof WisperError ? err.message : "Failed to load hosts.");
     }
   }, []);
 
+  // Debounced fetch: refetch whenever the trimmed query changes.
   useEffect(() => {
-    void load();
-  }, [load]);
+    const t = setTimeout(() => {
+      void loadFirst(query);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query, loadFirst]);
 
-  const shown = useMemo(
-    () =>
-      (hosts ?? []).filter((h) =>
-        matchesFields([h.id, h.name, h.label, h.owner_user_id], query),
-      ),
-    [hosts, query],
-  );
+  const loadMore = async () => {
+    if (nextOffset == null) return;
+    const seq = requestSeqRef.current;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const res = await admin.listHosts({
+        query: query.trim() || undefined,
+        limit: PAGE,
+        offset: nextOffset,
+      });
+      if (requestSeqRef.current !== seq) return;
+      setHosts((prev) => [...(prev ?? []), ...res.data]);
+      setNextOffset(parseOffset(res.next_offset));
+    } catch (err) {
+      if (requestSeqRef.current !== seq) return;
+      setError(
+        err instanceof WisperError ? err.message : "Failed to load more hosts.",
+      );
+    } finally {
+      if (requestSeqRef.current === seq) setLoadingMore(false);
+    }
+  };
 
   const replace = (updated: AdminHost) =>
     setHosts((list) =>
@@ -349,13 +417,18 @@ function HostsPanel() {
     }
   };
 
+  const shown = hosts ?? [];
+
   return (
     <DirectoryFrame
       kind="hosts"
       query={query}
       onQuery={setQuery}
-      onRefresh={() => void load()}
+      onRefresh={() => void loadFirst(query)}
       loading={hosts === null && error === null}
+      loadingMore={loadingMore}
+      hasMore={nextOffset != null}
+      onLoadMore={() => void loadMore()}
       error={error}
       actionError={actionError}
       empty={shown.length === 0}
@@ -463,36 +536,73 @@ function HostsPanel() {
   );
 }
 
-/** Consumers directory with suspend/unsuspend. */
+/** Consumers directory with suspend/unsuspend. Search + paging are
+ *  server-side, mirroring {@link HostsPanel}. */
 function UsersPanel() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<SuspendTarget | null>(null);
+  const requestSeqRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const loadFirst = useCallback(async (q: string) => {
+    const seq = ++requestSeqRef.current;
     setError(null);
     setUsers(null);
+    setNextOffset(null);
     try {
-      setUsers(await admin.listUsers());
+      const res = await admin.listUsers({
+        query: q.trim() || undefined,
+        limit: PAGE,
+        offset: 0,
+      });
+      if (requestSeqRef.current !== seq) return;
+      setUsers(res.data);
+      setNextOffset(parseOffset(res.next_offset));
     } catch (err) {
-      setError(err instanceof WisperError ? err.message : "Failed to load consumers.");
+      if (requestSeqRef.current !== seq) return;
+      setError(
+        err instanceof WisperError ? err.message : "Failed to load consumers.",
+      );
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const t = setTimeout(() => {
+      void loadFirst(query);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [query, loadFirst]);
 
-  const shown = useMemo(
-    () =>
-      (users ?? []).filter((u) =>
-        matchesFields([u.id, u.email, u.connect_status], query),
-      ),
-    [users, query],
-  );
+  const loadMore = async () => {
+    if (nextOffset == null) return;
+    const seq = requestSeqRef.current;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const res = await admin.listUsers({
+        query: query.trim() || undefined,
+        limit: PAGE,
+        offset: nextOffset,
+      });
+      if (requestSeqRef.current !== seq) return;
+      setUsers((prev) => [...(prev ?? []), ...res.data]);
+      setNextOffset(parseOffset(res.next_offset));
+    } catch (err) {
+      if (requestSeqRef.current !== seq) return;
+      setError(
+        err instanceof WisperError
+          ? err.message
+          : "Failed to load more consumers.",
+      );
+    } finally {
+      if (requestSeqRef.current === seq) setLoadingMore(false);
+    }
+  };
 
   const replace = (updated: AdminUser) =>
     setUsers((list) =>
@@ -514,13 +624,18 @@ function UsersPanel() {
     }
   };
 
+  const shown = users ?? [];
+
   return (
     <DirectoryFrame
       kind="users"
       query={query}
       onQuery={setQuery}
-      onRefresh={() => void load()}
+      onRefresh={() => void loadFirst(query)}
       loading={users === null && error === null}
+      loadingMore={loadingMore}
+      hasMore={nextOffset != null}
+      onLoadMore={() => void loadMore()}
       error={error}
       actionError={actionError}
       empty={shown.length === 0}
